@@ -1,4 +1,3 @@
-# Contenido completo para plotter.py (VERIFICADO con try-except correctos)
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
@@ -9,9 +8,7 @@ GRAVITY = 9.80665 # Aceleración estándar de la gravedad en m/s^2
 # --- Funciones de Ploteo Actualizadas y Nuevas ---
 
 def plot_lap_speed_profile(df_telemetry, metadata, lap_number):
-    """
-    Genera un gráfico del perfil de velocidad (Speed vs Distancia) para una vuelta específica.
-    """
+    """Genera un gráfico de Velocidad vs Distancia."""
     dist_col, speed_col, time_col, lap_col = 'LapDist', 'Speed', 'Time', 'Lap'
     required_cols = [lap_col, time_col, speed_col, dist_col]
     if not all(col in df_telemetry.columns for col in required_cols):
@@ -27,9 +24,7 @@ def plot_lap_speed_profile(df_telemetry, metadata, lap_number):
     plt.figure(figsize=(16, 7))
     plt.plot(lap_data[dist_col], lap_data[speed_col], label=f'Velocidad Vuelta {lap_number}', linewidth=1.5)
 
-    track_name = metadata.get('Track', 'Pista Desconocida')
-    vehicle_name = metadata.get('Vehicle', 'Vehículo Desconocido')
-    track_length_m = None
+    track_name = metadata.get('Track', 'Pista Desconocida'); vehicle_name = metadata.get('Vehicle', 'Vehículo Desconocido'); track_length_m = None
     try: # <-- INICIO TRY
         match = re.search(r'\(([\d.]+)\s*m\)', track_name)
         if match: track_length_m = float(match.group(1))
@@ -38,21 +33,13 @@ def plot_lap_speed_profile(df_telemetry, metadata, lap_number):
         # track_length_m permanece None
 
     title = f'Perfil de Velocidad vs Distancia - Vuelta {lap_number}\n{vehicle_name} @ {track_name}'
-    plt.title(title, fontsize=14)
-    plt.xlabel('Distancia en Vuelta (m)')
-    plt.ylabel('Velocidad (Kmh)')
+    plt.title(title, fontsize=14); plt.xlabel('Distancia en Vuelta (m)'); plt.ylabel('Velocidad (Kmh)')
     if track_length_m: plt.xlim(0, track_length_m)
-    plt.legend()
-    plt.grid(True)
-    print("Mostrando gráfico...")
-    plt.show()
-    print("Gráfico cerrado.")
+    plt.legend(); plt.grid(True); print("Mostrando gráfico..."); plt.show(); print("Gráfico cerrado.")
 
 
 def plot_lap_inputs(df_telemetry, metadata, lap_number):
-    """
-    Genera gráficos de entradas (Acel/Freno/Volante) vs Distancia para una vuelta.
-    """
+    """Genera gráficos de Entradas vs Distancia."""
     dist_col, throttle_col, brake_col, steer_col, time_col, lap_col = 'LapDist', 'Throttle', 'Brake', 'Steer', 'Time', 'Lap'
     required_cols = [lap_col, time_col, dist_col, throttle_col, brake_col, steer_col]
     if not all(col in df_telemetry.columns for col in required_cols):
@@ -65,16 +52,12 @@ def plot_lap_inputs(df_telemetry, metadata, lap_number):
     if lap_data.empty: print(f"Error: No hay datos para la vuelta {lap_number}."); return
 
     fig, axs = plt.subplots(2, 1, figsize=(16, 9), sharex=True)
-
-    track_name = metadata.get('Track', 'Pista Desconocida')
-    vehicle_name = metadata.get('Vehicle', 'Vehículo Desconocido')
-    track_length_m = None
+    track_name = metadata.get('Track', 'Pista Desconocida'); vehicle_name = metadata.get('Vehicle', 'Vehículo Desconocido'); track_length_m = None
     try: # <-- INICIO TRY
         match = re.search(r'\(([\d.]+)\s*m\)', track_name)
         if match: track_length_m = float(match.group(1))
     except Exception as e: # <-- EXCEPT CORRESPONDIENTE
         print(f"Advertencia: No se pudo extraer longitud de pista de '{track_name}': {e}")
-
     fig.suptitle(f'Entradas del Piloto vs Distancia - Vuelta {lap_number}\n{vehicle_name} @ {track_name}', fontsize=14)
 
     axs[0].plot(lap_data[dist_col], lap_data[throttle_col], label='Acelerador', color='green', linewidth=1.5)
@@ -91,9 +74,7 @@ def plot_lap_inputs(df_telemetry, metadata, lap_number):
 
 
 def plot_lap_engine(df_telemetry, metadata, lap_number):
-    """
-    Genera gráficos de RPM y Marcha vs Distancia para una vuelta específica.
-    """
+    """Genera gráficos de RPM y Marcha vs Distancia."""
     dist_col, rpm_col, gear_col, time_col, lap_col = 'LapDist', 'RPM', 'Gear', 'Time', 'Lap'
     required_cols = [lap_col, time_col, dist_col, rpm_col, gear_col]
     if not all(col in df_telemetry.columns for col in required_cols):
@@ -112,7 +93,6 @@ def plot_lap_engine(df_telemetry, metadata, lap_number):
         if match: track_length_m = float(match.group(1))
     except Exception as e: # <-- EXCEPT CORRESPONDIENTE
         print(f"Advertencia: No se pudo extraer longitud de pista de '{track_name}': {e}")
-
     plt.title(f'RPM y Marcha vs Distancia - Vuelta {lap_number}\n{vehicle_name} @ {track_name}', fontsize=14)
 
     color_rpm = 'tab:blue'; ax1.set_xlabel('Distancia en Vuelta (m)'); ax1.set_ylabel('RPM', color=color_rpm)
@@ -128,9 +108,7 @@ def plot_lap_engine(df_telemetry, metadata, lap_number):
         except ValueError: print(f"Advertencia: No se pudo determinar rango de marcha.")
 
     lines, labels = ax1.get_legend_handles_labels(); lines2, labels2 = ax2.get_legend_handles_labels()
-    # Solo mostrar leyenda si ambas listas de labels no están vacías
-    if labels or labels2:
-         ax2.legend(lines + lines2, labels + labels2, loc='upper right')
+    if labels or labels2: ax2.legend(lines + lines2, labels + labels2, loc='upper right')
     fig.tight_layout(); print("Mostrando gráfico..."); plt.show(); print("Gráfico cerrado.")
 
 
@@ -150,16 +128,15 @@ def plot_track_map(df_telemetry, metadata, lap_number):
 
     plt.figure(figsize=(10, 10))
     plt.plot(lap_data[lon_col], lap_data[lat_col], label=f'Trayectoria Vuelta {lap_number}', color='blue', linewidth=1.5)
-    # Solo añadir marcadores si hay al menos un punto
     if len(lap_data) > 0:
         plt.plot(lap_data[lon_col].iloc[0], lap_data[lat_col].iloc[0], 'go', markersize=8, label='Inicio Vuelta')
         plt.plot(lap_data[lon_col].iloc[-1], lap_data[lat_col].iloc[-1], 'rs', markersize=8, label='Fin Vuelta')
-    plt.axis('equal')
 
     track_name = metadata.get('Track', 'Pista Desconocida'); vehicle_name = metadata.get('Vehicle', 'Vehículo Desconocido')
     title = f'Mapa de Pista - Vuelta {lap_number}\n{vehicle_name} @ {track_name}'
     plt.title(title, fontsize=14); plt.xlabel('Longitud (deg)'); plt.ylabel('Latitud (deg)')
-    plt.legend(); plt.grid(True); print("Mostrando gráfico..."); plt.show(); print("Gráfico cerrado.")
+    plt.legend(); plt.grid(True); plt.axis('equal');
+    print("Mostrando gráfico..."); plt.show(); print("Gráfico cerrado.")
 
 
 def plot_lap_comparison(df_telemetry, metadata, lap_numbers, channel='Speed'):
@@ -175,10 +152,10 @@ def plot_lap_comparison(df_telemetry, metadata, lap_numbers, channel='Speed'):
     print(f"\n--- Generando COMPARACIÓN de Vueltas ({', '.join(map(str, lap_numbers))}) para el canal '{channel}' vs DISTANCIA ---")
     plt.figure(figsize=(16, 7))
     track_name = metadata.get('Track', 'Pista Desconocida'); vehicle_name = metadata.get('Vehicle', 'Vehículo Desconocido'); track_length_m = None
-    try: # <-- INICIO TRY
+    try: # <-- INICIO TRY (Correcto)
         match = re.search(r'\(([\d.]+)\s*m\)', track_name)
         if match: track_length_m = float(match.group(1))
-    except Exception as e: # <-- EXCEPT CORRESPONDIENTE
+    except Exception as e: # <-- EXCEPT CORRESPONDIENTE (Correcto)
         print(f"Advertencia: No se pudo extraer longitud de pista de '{track_name}': {e}")
 
     prop_cycle = plt.rcParams['axes.prop_cycle']; colors = prop_cycle.by_key()['color']
@@ -186,16 +163,12 @@ def plot_lap_comparison(df_telemetry, metadata, lap_numbers, channel='Speed'):
     for i, lap_num in enumerate(lap_numbers):
         if not isinstance(lap_num, int) or lap_num <= 0: continue
         lap_data = df_telemetry[df_telemetry[lap_col] == lap_num].copy()
-        if lap_data.empty or lap_data[dist_col].isnull().all() or lap_data[channel].isnull().all():
-             print(f"Advertencia: No hay datos válidos para graficar el canal '{channel}' en la vuelta {lap_num}, se omitirá.")
-             continue
         lap_data.dropna(subset=[dist_col, channel], inplace=True)
-        if lap_data.empty: continue # Volver a chequear después de dropna
+        if lap_data.empty: print(f"Advertencia: No hay datos válidos para graficar '{channel}' en V{lap_num}."); continue
         plt.plot(lap_data[dist_col], lap_data[channel], label=f'Vuelta {lap_num}', color=colors[plotted_lap_count % len(colors)], linewidth=1.5, alpha=0.8)
         plotted_lap_count += 1
 
-    if plotted_lap_count < 1:
-        print("Error: No se pudo graficar ninguna de las vueltas seleccionadas."); plt.close(); return
+    if plotted_lap_count < 1: print("Error: No se pudo graficar ninguna vuelta."); plt.close(); return
 
     title = f"Comparación de Vueltas ({channel}) vs Distancia\n{vehicle_name} @ {track_name}"
     plt.title(title, fontsize=14); plt.xlabel('Distancia en Vuelta (m)'); plt.ylabel(channel)
@@ -223,13 +196,13 @@ def plot_gg(df_telemetry, metadata, lap_number):
 
     plt.scatter(g_lon_g, g_lat_g, c=scatter_color, cmap=cmap, s=5, alpha=0.5)
     plt.axhline(0, color='black', lw=0.5); plt.axvline(0, color='black', lw=0.5)
-    plt.axis('equal'); plt.grid(True)
+    plt.grid(True)
 
     track_name = metadata.get('Track', 'Pista Desconocida'); vehicle_name = metadata.get('Vehicle', 'Vehículo Desconocido')
     title = f'Gráfico GG (Fricción) - Vuelta {lap_number}\n{vehicle_name} @ {track_name}'
     plt.title(title, fontsize=14); plt.xlabel('Aceleración Longitudinal (G)'); plt.ylabel('Aceleración Lateral (G)')
     if cmap: cbar = plt.colorbar(label='Velocidad (Kmh)')
-
+    plt.axis('equal');
     print("Mostrando gráfico..."); plt.show(); print("Gráfico cerrado.")
 
 
@@ -266,7 +239,7 @@ def plot_delta_time(df_telemetry, metadata, lap_number, reference_lap_number):
         if len(lap_data[dist_col].values) < 2 or len(aligned_base_dist) < 1: print("Error: Puntos insuficientes para interpolar."); return
 
         interp_time_lap = np.interp(aligned_base_dist, lap_data[dist_col].values, lap_data[time_col].values)
-        delta_time = -((interp_time_lap - interp_time_lap[0]) - (aligned_ref_time - aligned_ref_time[0]))
+        delta_time = -((interp_time_lap - interp_time_lap[0]) - (aligned_ref_time - aligned_ref_time[0])) # Negativo = Más Rápido
 
     except Exception as e: print(f"Error durante interpolación/cálculo delta: {e}"); return
 
@@ -275,10 +248,10 @@ def plot_delta_time(df_telemetry, metadata, lap_number, reference_lap_number):
     plt.axhline(0, color='black', linestyle='--', linewidth=0.7)
 
     track_name = metadata.get('Track', 'Pista Desconocida'); vehicle_name = metadata.get('Vehicle', 'Vehículo Desconocido'); track_length_m = None
-    try: # <-- INICIO TRY
+    try: # <-- INICIO TRY (Correcto)
         match = re.search(r'\(([\d.]+)\s*m\)', track_name)
         if match: track_length_m = float(match.group(1))
-    except Exception as e: # <-- EXCEPT CORRESPONDIENTE
+    except Exception as e: # <-- EXCEPT CORRESPONDIENTE (Correcto)
         print(f"Advertencia: No se pudo extraer longitud de pista de '{track_name}': {e}")
 
     title = f'Delta Time vs Distancia (V{lap_number} vs V{reference_lap_number})\n{vehicle_name} @ {track_name}'
@@ -330,70 +303,56 @@ def plot_delta_analysis_dashboard(df_telemetry, metadata, lap_number, reference_
                     if len(delta_lap_data[dist_col].values) >= 2 and len(aligned_base_dist) >= 1:
                         interp_time_lap = np.interp(aligned_base_dist, delta_lap_data[dist_col].values, delta_lap_data[time_col].values)
                         delta_time = -((interp_time_lap - interp_time_lap[0]) - (aligned_ref_time - aligned_ref_time[0]))
-                    else: can_plot_delta = False
-                else: can_plot_delta = False
+                    else: can_plot_delta = False; print("Advertencia: Puntos insuficientes para delta.")
+                else: can_plot_delta = False; print("Advertencia: Rango distancia no solapa para delta.")
             except Exception as e: print(f"Error calculando delta time: {e}"); can_plot_delta = False
-        else: can_plot_delta = False
+        else: can_plot_delta = False; print("Advertencia: Datos insuficientes tras limpiar NaNs para delta.")
 
     fig, axs = plt.subplots(3, 1, figsize=(16, 12), sharex=True)
     fig.suptitle(f'Análisis Delta: Vuelta {lap_number} vs Referencia V{reference_lap_number}\n{metadata.get("Vehicle","")} @ {metadata.get("Track","")}', fontsize=16)
 
-    ax1 = axs[0]; ax1.set_title('Mapa de Pista Comparativo')
- # --- Subplot 1: Mapa de Pista Superpuesto (Corregido con TEST) ---
+    # --- Subplot 1: Mapa de Pista Superpuesto ---
     ax1 = axs[0]; ax1.set_title('Mapa de Pista Comparativo')
     if can_plot_map:
-        # --- INICIO BLOQUE DE DIAGNÓSTICO ---
-        # (Dejamos los prints de diagnóstico por si acaso)
-        print("\n--- DIAGNÓSTICO MAPA ---")
-        # ... (los prints de forma, NaNs, rango van aquí) ...
-        print("--- FIN DIAGNÓSTICO MAPA ---\n")
-        # --- FIN BLOQUE DE DIAGNÓSTICO ---
-
-
-        # --- INICIO TEST LÍNEA DIAGONAL ---
-        print("--- MAP PLOT TEST: Intentando dibujar línea diagonal simple ---")
+        # (Omitir prints de diagnóstico)
+        plot_ok = False
         try:
-            # Usar rangos pequeños para asegurar que esté visible si funciona
-            test_lon_min, test_lon_max = 8.56, 8.57
-            test_lat_min, test_lat_max = 49.32, 49.33
-            ax1.plot([test_lon_min, test_lon_max], [test_lat_min, test_lat_max],
-                     color='red', linestyle='-', linewidth=2, label='LÍNEA DE TEST')
-            print("--- MAP PLOT TEST: Comando ax1.plot ejecutado sin error ---")
-            ax1.legend() # Mostrar leyenda para ver si aparece "LÍNEA DE TEST"
+            # Graficar referencia (gris punteado)
+            ref_plot_data = ref_lap_data_full.dropna(subset=map_cols)
+            if not ref_plot_data.empty:
+                 ax1.plot(ref_plot_data[lon_col], ref_plot_data[lat_col], label=f'Referencia V{reference_lap_number}', color='grey', linestyle='--', linewidth=1.5, alpha=0.8)
+                 if len(ref_plot_data) > 0: ax1.plot(ref_plot_data[lon_col].iloc[0], ref_plot_data[lat_col].iloc[0], 'o', color='grey', markersize=6, label=f'Inicio V{reference_lap_number}')
+                 plot_ok = True
+            # Graficar vuelta actual (azul sólido)
+            lap_plot_data = lap_data_full.dropna(subset=map_cols)
+            if not lap_plot_data.empty:
+                 ax1.plot(lap_plot_data[lon_col], lap_plot_data[lat_col], label=f'Vuelta {lap_number}', color='blue', linewidth=1.5)
+                 if len(lap_plot_data) > 0: ax1.plot(lap_plot_data[lon_col].iloc[0], lap_plot_data[lat_col].iloc[0], 'bo', markersize=6, label=f'Inicio V{lap_number}')
+                 plot_ok = True
+            if plot_ok:
+                 # Establecer apariencia DESPUÉS de graficar
+                 ax1.set_xlabel('Longitud (deg)'); ax1.set_ylabel('Latitud (deg)')
+                 ax1.legend(); ax1.grid(True); ax1.axis('equal') # Aplicar axis equal al final
+            else:
+                 ax1.text(0.5, 0.5, 'Datos Lat/Lon insuficientes tras NaNs.', ha='center', va='center', transform=ax1.transAxes)
+                 print("Advertencia: No se graficó mapa (datos insuficientes/inválidos)."); ax1.grid(True)
         except Exception as e:
-            print(f"--- MAP PLOT TEST: ERROR dibujando línea de test: {e} ---")
-        # --- FIN TEST LÍNEA DIAGONAL ---
-
-
-        # --- Código Original Comentado Temporalmente ---
-        # map_lap_data = lap_data_full.dropna(subset=map_cols)
-        # map_ref_lap_data = ref_lap_data_full.dropna(subset=map_cols)
-        # if not map_lap_data.empty and not map_ref_lap_data.empty:
-        #      ax1.plot(map_ref_lap_data[lon_col], map_ref_lap_data[lat_col], label=f'Referencia V{reference_lap_number}', color='grey', linestyle='--', linewidth=1.5, alpha=0.8)
-        #      ax1.plot(map_lap_data[lon_col], map_lap_data[lat_col], label=f'Vuelta {lap_number}', color='blue', linewidth=1.5)
-        #      if not map_lap_data.empty: ax1.plot(map_lap_data[lon_col].iloc[0], map_lap_data[lat_col].iloc[0], 'bo', markersize=6, label=f'Inicio V{lap_number}')
-        #      if not map_ref_lap_data.empty: ax1.plot(map_ref_lap_data[lon_col].iloc[0], map_ref_lap_data[lat_col].iloc[0], 'o', color='grey', markersize=6, label=f'Inicio V{reference_lap_number}')
-        #      ax1.axis('equal'); ax1.set_xlabel('Longitud (deg)'); ax1.set_ylabel('Latitud (deg)')
-        #      ax1.legend(); ax1.grid(True)
-        # else:
-        #      ax1.text(0.5, 0.5, 'Datos de Mapa insuficientes tras limpiar NaNs', ha='center', va='center', transform=ax1.transAxes)
-        #      print("Advertencia: Datos insuficientes para graficar mapa después de limpiar NaNs.")
-        ax1.grid(True) # Dejar la rejilla para referencia visual
-        ax1.axis('equal') # Mantener axis equal
-        ax1.set_xlabel('Longitud (deg)'); ax1.set_ylabel('Latitud (deg)') # Mantener etiquetas
-        # --- Fin Código Original Comentado ---
+            print(f"--- ERROR durante el ploteo del mapa: {e} ---")
+            ax1.text(0.5, 0.5, f'Error al graficar mapa:\\n{e}', ha='center', va='center', transform=ax1.transAxes)
+            ax1.set_xlabel('Longitud (deg)'); ax1.set_ylabel('Latitud (deg)'); ax1.grid(True)
     else:
         ax1.text(0.5, 0.5, 'Columnas Lat/Lon no encontradas', ha='center', va='center', transform=ax1.transAxes)
+        ax1.grid(True)
 
-# ... (resto de la función para subplots 2 y 3 sin cambios) ...
-
+    # --- Subplot 2: Delta Time ---
     ax2 = axs[1]; ax2.set_title('Delta Time vs Distancia')
     if can_plot_delta and delta_time is not None and aligned_base_dist is not None:
         ax2.plot(aligned_base_dist, delta_time, label=f'Delta Tiempo (V{lap_number} vs Ref V{reference_lap_number})', color='purple', linewidth=1.5)
         ax2.axhline(0, color='black', linestyle='--', linewidth=0.7)
         ax2.set_ylabel('Ganancia(+) / Pérdida(-) (s)'); ax2.grid(True); ax2.legend()
-    else: ax2.text(0.5, 0.5, 'Delta Time no disponible/calculable', ha='center', va='center', transform=ax2.transAxes)
+    else: ax2.text(0.5, 0.5, 'Delta Time no disponible/calculable', ha='center', va='center', transform=ax2.transAxes); ax2.grid(True)
 
+    # --- Subplot 3: Acelerador / Freno Superpuesto ---
     ax3 = axs[2]; ax3.set_title('Acelerador y Freno vs Distancia')
     if can_plot_inputs:
         input_lap_data = lap_data_full.dropna(subset=input_cols + [dist_col])
@@ -405,26 +364,57 @@ def plot_delta_analysis_dashboard(df_telemetry, metadata, lap_number, reference_
             ax3.plot(input_ref_lap_data[dist_col], input_ref_lap_data[brake_col], label=f'Freno Ref V{reference_lap_number}', color='salmon', linestyle='--', linewidth=1)
             ax3.set_ylabel('Pedal (0-1)'); ax3.set_xlabel('Distancia en Vuelta (m)')
             ax3.set_ylim(-0.05, 1.05); ax3.grid(True); ax3.legend(fontsize='small', ncol=2)
-        else: ax3.text(0.5, 0.5, 'Datos Acel/Freno insuficientes tras NaNs', ha='center', va='center', transform=ax3.transAxes)
-    else: ax3.text(0.5, 0.5, 'Columnas Acel/Freno no encontradas', ha='center', va='center', transform=ax3.transAxes)
+        else: ax3.text(0.5, 0.5, 'Datos Acel/Freno insuficientes tras NaNs', ha='center', va='center', transform=ax3.transAxes); ax3.grid(True)
+    else: ax3.text(0.5, 0.5, 'Columnas Acel/Freno no encontradas', ha='center', va='center', transform=ax3.transAxes); ax3.grid(True)
 
-    track_length_m = None
-    try:
+    # --- Dentro de la función plot_delta_analysis_dashboard ---
+        # ... (Todo el código anterior para definir subplots ax1, ax2, ax3 y graficar en ellos) ...
+
+        # --- Ajustar límites X comunes ---
+        # (Esta sección debe estar indentada UN NIVEL dentro de la función)
+    xlim_to_set = None
+    try: # Intentar obtener de longitud de pista primero
         track_name = metadata.get('Track', '')
         match = re.search(r'\(([\d.]+)\s*m\)', track_name)
         if match:
             track_length_m = float(match.group(1))
-            axs[0].set_xlim(0, track_length_m)
-    except Exception:
-        try:
-            common_min_dist = min(lap_data_full[dist_col].min(), ref_lap_data_full[dist_col].min())
-            common_max_dist = max(lap_data_full[dist_col].max(), ref_lap_data_full[dist_col].max())
-            axs[0].set_xlim(common_min_dist, common_max_dist)
-        except (KeyError, ValueError):
-            pass  # Handle cases where data is insufficient
-        except (KeyError, ValueError): pass # Evitar error si no hay datos
+            # Asegurarse que la longitud no sea cero o negativa
+            if track_length_m > 0:
+                    xlim_to_set = (0, track_length_m)
+    except Exception: # Ignorar errores al obtener longitud
+        pass # xlim_to_set permanece None
 
+    if xlim_to_set is None: # Si falla longitud de pista, intentar con límites de datos
+            try:
+                # Concatenar distancias válidas de ambas vueltas para obtener rango completo
+                all_dist_data = pd.concat([
+                    lap_data_full[dist_col],
+                    ref_lap_data_full[dist_col]
+                ]).dropna()
+                if not all_dist_data.empty:
+                    # Añadir un pequeño margen por si acaso
+                    data_min = all_dist_data.min()
+                    data_max = all_dist_data.max()
+                    # Evitar que min y max sean iguales
+                    if data_min < data_max:
+                        xlim_to_set = (data_min, data_max)
+            except (KeyError, ValueError): # Si fallan los límites de datos también
+                pass # Dejar que matplotlib autoescale
+
+    # Aplicar límites si se determinaron
+    if xlim_to_set:
+        # Aplicar a axs[0] y se propagará porque sharex=True
+        print(f"Aplicando límites eje X: {xlim_to_set}")
+        axs[0].set_xlim(xlim_to_set)
+    else:
+        print("Advertencia: No se pudieron determinar límites automáticos para el eje X (Distancia).")
+
+    # --- ESTAS ÚLTIMAS LÍNEAS SON CRÍTICAS ---
+    # Asegúrate de que están indentadas al MISMO NIVEL que el bloque try/except anterior
+    # y alineadas verticalmente con el inicio de la lógica DENTRO de la función.
     plt.tight_layout(rect=[0, 0.03, 1, 0.96])
     print("Mostrando dashboard de análisis delta...")
     plt.show()
     print("Dashboard cerrado.")
+    # --- FIN de la función plot_delta_analysis_dashboard ---
+    # (Asegúrate que la definición de la siguiente función empieza SIN indentación o con la indentación de nivel 0)
