@@ -1,225 +1,158 @@
-# Contenido completo para main.py (con cálculo de tiempos de vuelta)
-import data_loader # Nuestro módulo
-import plotter   # Nuestro módulo de gráficos
+import data_loader
+import plotter
 import os
-# import tkinter as tk # Ya no usamos tkinter por ahora
-# from tkinter import filedialog # Ya no usamos tkinter por ahora
-import pandas as pd # Importar pandas aquí también para option_context
+import pandas as pd
+import numpy as np
 
 def get_path_from_terminal():
     """Pide al usuario que ingrese la ruta al archivo CSV en la terminal."""
     print("\nPor favor, pega la ruta completa al archivo Telemetry.csv y presiona Enter:")
-    while True: # Repetir hasta obtener una ruta válida o vacía
+    while True:
         filepath = input("Ruta al archivo (o deja vacío para salir): ")
-        if not filepath: # Si el usuario presiona Enter sin escribir nada
-             return None
-        # Quitar comillas si el usuario las pegó (común en Windows)
+        if not filepath: return None
         filepath = filepath.strip('"')
         if os.path.exists(filepath) and filepath.lower().endswith('.csv'):
-            print(f"Archivo encontrado: {filepath}")
-            return filepath
-        else:
-            print(f"Error: La ruta '{filepath}' no es válida o no es un archivo .csv. Inténtalo de nuevo.")
-            # No retorna None aquí, permite reintentar
+            print(f"Archivo encontrado: {filepath}"); return filepath
+        else: print(f"Error: Ruta '{filepath}' inválida o no es .csv.");
 
+def get_lap_list_from_input(prompt, available_laps):
+     """ Pide al usuario una lista de vueltas separadas por coma. """
+     while True:
+         print(prompt)
+         laps_str = input(f"Vueltas disponibles: {available_laps}. Ingresa números separados por coma: ")
+         try:
+             selected_laps = [int(lap.strip()) for lap in laps_str.split(',')]
+             if all(lap in available_laps for lap in selected_laps):
+                 if len(selected_laps) >= 2: return selected_laps
+                 else: print("Error: Debes seleccionar al menos dos vueltas.")
+             else: print("Error: Una o más vueltas no están disponibles.")
+         except ValueError: print("Error: Ingresa números separados por coma (ej. 9,10,11).")
 
 # --- Ejecución Principal ---
 print("--- Iniciando RennsportTelemetryTool ---")
-
-# 1. Obtener la ruta del archivo desde la terminal
 telemetry_csv_path = get_path_from_terminal()
 
-# 2. Proceder solo si se obtuvo una ruta válida
 if telemetry_csv_path:
-    # Cargar los datos y metadatos
     df_telemetry, metadata = data_loader.load_telemetry_csv(telemetry_csv_path)
 
-    # Verificar si la carga fue exitosa
     if df_telemetry is not None:
         print("\n--- Metadatos Extraídos ---")
         if metadata:
-            for key, value in metadata.items():
-                print(f"- {key}: {value}")
-        else:
-            print("No se extrajeron metadatos.")
+            for key, value in metadata.items(): print(f"- {key}: {value}")
+        else: print("No se extrajeron metadatos.")
 
-        # --- Verificación de Datos (Opcional mostrar todo) ---
-        # (Sección comentada para brevedad)
+        laps_found_raw = sorted(df_telemetry['Lap'].unique()) if 'Lap' in df_telemetry else []
 
-        laps_found = []
-        if 'Lap' in df_telemetry.columns:
-            laps_found = sorted(df_telemetry['Lap'].unique())
-            print(f"\nVueltas encontradas en el archivo: {laps_found}")
-        else:
-            print("\nAdvertencia: No se encontró la columna 'Lap'.")
-
- # --- ¡NUEVO! Cálculo de Tiempos de Vuelta y Mejor Vuelta (MEJORADO) ---
         lap_times_df = None
         best_lap_info = None
-        if laps_found:
-            # Verificar que tenemos las columnas necesarias
+        # --- Cálculo de Tiempos de Vuelta y Mejor Vuelta ---
+        if laps_found_raw:
+             # ... (Bloque de cálculo de tiempos y mejor vuelta - sin cambios respecto a la versión anterior) ...
             required_cols_for_timing = ['Time', 'Lap', 'IsLapValid']
             if all(col in df_telemetry.columns for col in required_cols_for_timing):
                 print("\n--- Calculando Tiempos de Vuelta (considerando validez) ---")
                 try:
-                    # Agrupar por vuelta, obtener min/max tiempo y el último estado de validez
                     lap_stats = df_telemetry.groupby('Lap').agg(
-                        Time_min=('Time', 'min'),
-                        Time_max=('Time', 'max'),
-                        IsValid=('IsLapValid', 'last') # Obtener el último estado de validez registrado para la vuelta
+                        Time_min=('Time', 'min'), Time_max=('Time', 'max'), IsValid=('IsLapValid', 'last')
                     )
-                    # Calcular la duración registrada para cada vuelta
                     lap_stats['LapTime'] = lap_stats['Time_max'] - lap_stats['Time_min']
-
-                    # Crear DataFrame de resultados limpio
                     lap_times_df = lap_stats[['LapTime', 'IsValid']].reset_index()
                     lap_times_df.rename(columns={'Lap': 'Vuelta', 'LapTime': 'Tiempo (s)', 'IsValid': 'Valida'}, inplace=True)
-
-                    # Formatear tiempo a MM:SS.ms
                     def format_time(seconds):
-                         if pd.isna(seconds): return "N/A"
-                         try:
-                             minutes = int(seconds // 60)
-                             secs = int(seconds % 60)
-                             millis = int((seconds - int(seconds)) * 1000)
-                             return f"{minutes:02d}:{secs:02d}.{millis:03d}"
-                         except ValueError: return "Error Formato"
-
+                        if pd.isna(seconds): return "N/A"
+                        try: minutes = int(seconds // 60); secs = int(seconds % 60); millis = int((seconds - int(seconds)) * 1000); return f"{minutes:02d}:{secs:02d}.{millis:03d}"
+                        except ValueError: return "Error Formato"
                     lap_times_df['Tiempo Formateado'] = lap_times_df['Tiempo (s)'].apply(format_time)
-
                     print("Tiempos de vuelta calculados:")
-                    for index, row in lap_times_df.iterrows():
-                         validity_str = "(Válida)" if row['Valida'] == True else "(Inválida/Incompleta?)" # Añadir estado
-                         print(f"  Vuelta {row['Vuelta']}: {row['Tiempo Formateado']} {validity_str}")
-
-                    # --- Encontrar la MEJOR VUELTA VÁLIDA y COMPLETA ---
-                    # 1. Filtrar solo vueltas marcadas como válidas
+                    for index, row in lap_times_df.iterrows(): print(f"  Vuelta {row['Vuelta']}: {row['Tiempo Formateado']} ({'Válida' if row['Valida']==True else 'Inválida/Inc.'})") # Formato Validez
                     valid_laps = lap_times_df[lap_times_df['Valida'] == True].copy()
-
                     if not valid_laps.empty:
-                        # 2. Heurística: Filtrar vueltas demasiado cortas (posibles out/in laps)
-                        # Calcular tiempo mediano de las vueltas válidas
                         median_valid_time = valid_laps['Tiempo (s)'].median()
-                        # Definir umbral (ej. 80% del mediano) - ¡AJUSTABLE!
                         min_time_threshold = median_valid_time * 0.80
-                        print(f"Tiempo mediano válido: {format_time(median_valid_time)}. Umbral para vuelta completa: >{format_time(min_time_threshold)}")
-
-                        # Filtrar por umbral de tiempo
+                        print(f"Tiempo mediano válido: {format_time(median_valid_time)}. Umbral vuelta completa: >{format_time(min_time_threshold)}")
                         complete_valid_laps = valid_laps[valid_laps['Tiempo (s)'] > min_time_threshold]
-
                         if not complete_valid_laps.empty:
-                            # 3. Encontrar la mejor vuelta entre las válidas y completas
                             best_lap_index = complete_valid_laps['Tiempo (s)'].idxmin()
                             best_lap_row = complete_valid_laps.loc[best_lap_index]
-                            best_lap_info = {
-                                'lap_number': int(best_lap_row['Vuelta']),
-                                'time_seconds': best_lap_row['Tiempo (s)'],
-                                'time_formatted': best_lap_row['Tiempo Formateado']
-                            }
-                            print(f"\nMEJOR VUELTA VÁLIDA encontrada: Vuelta {best_lap_info['lap_number']} con un tiempo de {best_lap_info['time_formatted']}")
-                        else:
-                            print("\nNo se encontraron vueltas válidas que superen el umbral de tiempo mínimo (posiblemente solo vueltas cortas/inválidas).")
-                            best_lap_info = None # Asegurarse de que es None
-                    else:
-                        print("\nNo se encontraron vueltas marcadas como válidas en los datos.")
-                        best_lap_info = None # Asegurarse de que es None
+                            best_lap_info = {'lap_number': int(best_lap_row['Vuelta']), 'time_seconds': best_lap_row['Tiempo (s)'],'time_formatted': best_lap_row['Tiempo Formateado']}
+                            print(f"\nMEJOR VUELTA VÁLIDA encontrada: Vuelta {best_lap_info['lap_number']} ({best_lap_info['time_formatted']})")
+                        else: print("\nNo se encontraron vueltas válidas completas."); best_lap_info = None
+                    else: print("\nNo se encontraron vueltas marcadas como válidas."); best_lap_info = None
+                except Exception as e: print(f"Error calculando tiempos de vuelta: {e}")
+            else: print(f"Advertencia: Faltan columnas para calcular tiempos válidos.")
+        # --- Fin Cálculo ---
 
-
-                except Exception as e:
-                    print(f"Error calculando tiempos de vuelta: {e}")
-            else:
-                missing_required = [col for col in required_cols_for_timing if col not in df_telemetry.columns]
-                print(f"Advertencia: Faltan columnas necesarias para calcular tiempos de vuelta válidos: {missing_required}")
-
-        # --- Fin Cálculo de Tiempos de Vuelta (MEJORADO) ---
-
-
-        # --- Sección de Ploteo Mejorada ---
-        if laps_found:
-            # Convertir vueltas a int para mostrar limpiamente
-            laps_formatted = [int(lap) for lap in laps_found]
+        # --- Sección de Ploteo Principal ---
+        if laps_found_raw:
+            laps_available_int = [int(lap) for lap in laps_found_raw]
 
             while True: # Bucle principal para elegir vuelta
-                # --- MODIFICAR ESTA LÍNEA ---
-                print(f"\nVueltas disponibles: {laps_formatted}") # Usar la lista formateada
-
-                # Añadir info de mejor vuelta al prompt si existe
-                best_lap_text = f" (Mejor Válida: Vuelta {best_lap_info['lap_number']} - {best_lap_info['time_formatted']})" if best_lap_info else ""
+                print(f"\nVueltas disponibles: {laps_available_int}")
+                best_lap_text = f" (Mejor Válida: V{best_lap_info['lap_number']} - {best_lap_info['time_formatted']})" if best_lap_info else ""
                 print(f"\n¿Qué vuelta deseas analizar?{best_lap_text} (Escribe el número o 'Q' para salir)")
-
                 lap_choice_str = input("Elige una vuelta: ")
-                # ... (resto del código del bucle sin cambios) ...
-
-                if lap_choice_str.upper() == 'Q':
-                    print("Saliendo del menú de análisis.")
-                    break # Salir del bucle principal
+                if lap_choice_str.upper() == 'Q': break
 
                 try:
-                    lap_choice = int(lap_choice_str) # Intentar convertir la elección de vuelta a número
+                    lap_choice = int(lap_choice_str)
+                    if lap_choice not in laps_available_int: print(f"Error: Vuelta {lap_choice} no válida."); continue
 
-                    if lap_choice not in laps_found:
-                        print(f"Error: La vuelta {lap_choice} no está en la lista.")
-                        continue # Volver a pedir la vuelta
-
-                    # Si la vuelta es válida, entrar al bucle para elegir gráfico
-                    while True: # Bucle interno para elegir gráfico
+                    # Bucle interno para elegir gráfico
+                    while True:
                         print(f"\n--- Análisis Vuelta {lap_choice} ---")
                         print("¿Qué gráfico deseas ver?")
-                        print("  1: Perfil de Velocidad")
-                        print("  2: Entradas del Piloto (Acel/Freno/Volante)")
-                        print("  3: Motor/Caja (RPM/Marcha)")
+                        print("  1: Perfil de Velocidad (vs Dist)")
+                        print("  2: Entradas Piloto (vs Dist)")
+                        print("  3: Motor/Caja (vs Dist)")
                         print("  4: Mapa del Circuito (Lat/Lon)")
-                        # (Aquí añadiremos más opciones después)
+                        print("  5: Gráfico GG (G-Lat vs G-Lon)")
+                        print("  --- Comparaciones ---")
+                        print("  6: Comparar Vueltas (Velocidad vs Dist)")
+                        print("  7: Delta Time vs Mejor Vuelta (vs Dist)")
+                        print("  8: DASHBOARD Análisis Delta (Mapa/Delta/Inputs)") # <-- NUEVA OPCIÓN
                         print("  --------------------")
                         print("  9: Elegir otra vuelta")
                         print("  0: Salir del programa")
 
                         plot_choice_str = input("Elige una opción: ")
-                        try:
-                            plot_choice = int(plot_choice_str) # Intentar convertir elección de gráfico
-                        except ValueError:
-                            print("Error: Ingresa un número válido para la opción de gráfico.")
-                            continue # Volver a pedir opción de gráfico
+                        try: plot_choice = int(plot_choice_str)
+                        except ValueError: print("Error: Ingresa un número."); continue
 
-                        # Ejecutar acción según la elección del gráfico
-                        if plot_choice == 1:
-                            plotter.plot_lap_speed_profile(df_telemetry, metadata, lap_choice)
-                        elif plot_choice == 2:
-                            plotter.plot_lap_inputs(df_telemetry, metadata, lap_choice)
-                        elif plot_choice == 3:
-                            plotter.plot_lap_engine(df_telemetry, metadata, lap_choice)
-                        elif plot_choice == 4:
-                            plotter.plot_track_map(df_telemetry, metadata, lap_choice)
-                        elif plot_choice == 9:
-                            print("Volviendo a selección de vuelta...")
-                            break # Salir del bucle interno para elegir otra vuelta
-                        elif plot_choice == 0:
-                            print("Saliendo del programa.")
-                            raise SystemExit # Usar SystemExit para salir de todo
-                        else:
-                            print("Opción de gráfico no válida.")
+                        # Ejecutar acción
+                        if plot_choice == 1: plotter.plot_lap_speed_profile(df_telemetry, metadata, lap_choice)
+                        elif plot_choice == 2: plotter.plot_lap_inputs(df_telemetry, metadata, lap_choice)
+                        elif plot_choice == 3: plotter.plot_lap_engine(df_telemetry, metadata, lap_choice)
+                        elif plot_choice == 4: plotter.plot_track_map(df_telemetry, metadata, lap_choice)
+                        elif plot_choice == 5: plotter.plot_gg(df_telemetry, metadata, lap_choice)
+                        elif plot_choice == 6:
+                             laps_to_compare = get_lap_list_from_input("\nIntroduce vueltas a comparar (ej. 7,8,11)", laps_available_int)
+                             if laps_to_compare: plotter.plot_lap_comparison(df_telemetry, metadata, laps_to_compare, channel='Speed')
+                        elif plot_choice == 7:
+                            if best_lap_info:
+                                if lap_choice != best_lap_info['lap_number']: plotter.plot_delta_time(df_telemetry, metadata, lap_choice, best_lap_info['lap_number'])
+                                else: print("Ya estás analizando la mejor vuelta.")
+                            else: print("No hay mejor vuelta válida de referencia.")
+                        elif plot_choice == 8: # <-- NUEVA LÓGICA
+                            if best_lap_info:
+                                if lap_choice != best_lap_info['lap_number']:
+                                    plotter.plot_delta_analysis_dashboard(df_telemetry, metadata, lap_choice, best_lap_info['lap_number'])
+                                else:
+                                     print(f"Estás analizando la mejor vuelta (V{lap_choice}). No se puede comparar contra sí misma.")
+                                     print("Consejo: Elige la opción 8 cuando analices una vuelta *diferente* a la mejor.")
+                            else:
+                                print("No se ha identificado una mejor vuelta válida para usar como referencia en el dashboard delta.")
 
-                except ValueError: # Captura error si int(lap_choice_str) falla
-                    print("Error: Por favor, ingresa un número de vuelta válido o 'Q'.")
-                    # El bucle principal while continuará y volverá a pedir la vuelta
-                except SystemExit: # Si se eligió salir desde el menú interno
-                    break # Salir del bucle principal
-                except Exception as e: # Capturar cualquier otro error inesperado
-                    print(f"Ocurrió un error inesperado: {e}")
-                    break # Salir del bucle principal por seguridad
+                        elif plot_choice == 9: break # Salir del bucle interno
+                        elif plot_choice == 0: raise SystemExit # Salir del programa
+                        else: print("Opción no válida.")
 
-        else:
-             print("\nNo hay vueltas disponibles para analizar.")
-        # --- Fin Sección de Ploteo Mejorada ---
-
-
+                except ValueError: print("Error: Ingresa un número de vuelta válido o 'Q'.")
+                except SystemExit: break
+                except Exception as e: print(f"Ocurrió un error inesperado: {e}"); break
+        else: print("\nNo hay vueltas disponibles para analizar.")
+        # --- Fin Sección de Ploteo ---
         print("\n--- Fin del procesamiento ---")
-
-    else:
-        print("\nNo se pudieron cargar los datos de telemetría del archivo seleccionado.")
-
-else:
-    print("\nOperación cancelada / No se proporcionó ruta válida.")
-
+    else: print("\nNo se pudieron cargar los datos.")
+else: print("\nOperación cancelada / No se proporcionó ruta válida.")
 
 print("\n--- RennsportTelemetryTool finalizado ---")
