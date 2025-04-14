@@ -114,7 +114,7 @@ def plot_lap_engine(df_telemetry, metadata, lap_number):
 def plot_delta_analysis_dashboard(df_telemetry, metadata, lap_number, reference_lap_number):
     """
     Genera un dashboard combinado (Mapa Lat/Lon Superpuesto/Delta/Inputs)
-    Intentando replicar plot_track_map en el subplot ax1 de forma robusta.
+    con diagnóstico de datos Lat/Lon mejorado y orden de ploteo invertido en el mapa.
     """
     # --- Definición de Columnas ---
     dist_col, time_col, lap_col = 'LapDist', 'Time', 'Lap'
@@ -170,13 +170,13 @@ def plot_delta_analysis_dashboard(df_telemetry, metadata, lap_number, reference_
         else: can_plot_delta = False
 
     # --- Creación de la Figura y Ejes ---
-    # *** CAMBIO: Eliminado sharex=True temporalmente para aislar ax1 ***
-    fig, axs = plt.subplots(3, 1, figsize=(16, 12)) #, sharex=True)
+    # Asumiendo sharex=False (o comentado) basado en la última versión
+    fig, axs = plt.subplots(3, 1, figsize=(16, 12))
     vehicle_info = metadata.get("Vehicle","Vehículo Desconocido")
     track_info = metadata.get("Track","Pista Desconocida")
     fig.suptitle(f'Análisis Delta: Vuelta {lap_number} vs Referencia V{reference_lap_number}\n{vehicle_info} @ {track_info}', fontsize=16)
 
-    # --- Subplot 1: Mapa de Pista Lat/Lon Superpuesto (VERSIÓN ROBUSTA) ---
+    # --- Subplot 1: Mapa de Pista Lat/Lon Superpuesto (DIAGNÓSTICO DATOS + ORDEN INVERTIDO) ---
     ax1 = axs[0]; ax1.set_title('Mapa de Pista Comparativo (Trazadas Lat/Lon)')
     if can_plot_map:
         plot_ok = False
@@ -185,54 +185,88 @@ def plot_delta_analysis_dashboard(df_telemetry, metadata, lap_number, reference_
             print("  Diagnóstico Mapa Lat/Lon (Subplot 1):")
             ref_plot_data = ref_lap_data_full.dropna(subset=map_cols)
             print(f"    Ref V{reference_lap_number}: {len(ref_plot_data)} puntos Lat/Lon válidos.")
+            # *** NUEVO: Imprimir muestra de datos y verificar inf/nan ***
+            if not ref_plot_data.empty:
+                print(f"      Ref V{reference_lap_number} - Primeros 3 puntos (Lon, Lat):")
+                print(ref_plot_data[[lon_col, lat_col]].head(3).to_string(index=False))
+                print(f"      Ref V{reference_lap_number} - Últimos 3 puntos (Lon, Lat):")
+                print(ref_plot_data[[lon_col, lat_col]].tail(3).to_string(index=False))
+                print(f"      Ref V{reference_lap_number} - NaNs en Lon: {ref_plot_data[lon_col].isna().sum()}, Inf en Lon: {np.isinf(ref_plot_data[lon_col]).sum()}")
+                print(f"      Ref V{reference_lap_number} - NaNs en Lat: {ref_plot_data[lat_col].isna().sum()}, Inf en Lat: {np.isinf(ref_plot_data[lat_col]).sum()}")
+
             lap_plot_data = lap_data_full.dropna(subset=map_cols)
             print(f"    Lap V{lap_number}: {len(lap_plot_data)} puntos Lat/Lon válidos.")
+            # (Opcional: añadir prints similares para lap_plot_data si es necesario)
 
-            # --- Graficar si hay datos ---
-            if not ref_plot_data.empty:
-                 ax1.plot(ref_plot_data[lon_col], ref_plot_data[lat_col],
-                          label=f'Referencia V{reference_lap_number}', color='grey',
-                          linestyle='--', linewidth=1.0, alpha=0.8) # Linea un poco mas fina
-                 plot_ok = True
 
+            # --- Graficar si hay datos (ORDEN INVERTIDO) ---
+            # 1. Graficar vuelta ACTUAL primero (azul)
             if not lap_plot_data.empty:
+                 print(f"    Intentando graficar Lap V{lap_number} PRIMERO...")
                  ax1.plot(lap_plot_data[lon_col], lap_plot_data[lat_col],
-                          label=f'Vuelta {lap_number}', color='blue',
-                          linewidth=1.2, alpha=0.9) # Linea un poco mas fina
+                          label=f'Vuelta {lap_number}',
+                          color='blue',
+                          linewidth=1.2,
+                          alpha=0.9,
+                          zorder=2) # Delante
                  plot_ok = True
+
+            # 2. Graficar vuelta de REFERENCIA después (naranja)
+            if not ref_plot_data.empty:
+                 print(f"    Intentando graficar Ref V{reference_lap_number} DESPUÉS...")
+                 if ref_plot_data[lon_col].nunique() <= 1 and ref_plot_data[lat_col].nunique() <= 1:
+                     print(f"    ADVERTENCIA: Datos de Ref V{reference_lap_number} parecen ser un único punto.")
+                     ax1.plot(ref_plot_data[lon_col].iloc[0], ref_plot_data[lat_col].iloc[0], 'o', color='orange', markersize=6, label=f'Referencia V{reference_lap_number} (Punto)')
+                 else:
+                     # Graficar línea referencia
+                     ax1.plot(ref_plot_data[lon_col], ref_plot_data[lat_col],
+                              label=f'Referencia V{reference_lap_number}',
+                              color='orange',
+                              linestyle='-',
+                              linewidth=1.5,
+                              alpha=0.9,
+                              zorder=1) # Detrás (aunque se plotea después, zorder lo controla)
+                 plot_ok = True # Marcar como ok si se intentó
 
             # --- Configuración Final del Subplot del Mapa ---
             ax1.set_xlabel('Longitud (deg)')
             ax1.set_ylabel('Latitud (deg)')
             ax1.grid(True)
-
             if plot_ok:
                  ax1.legend()
-                 print("    Líneas del mapa graficadas.")
-                 # *** CAMBIO: Usar set_aspect en lugar de axis('equal') ***
-                 print("    Aplicando set_aspect('equal', adjustable='box')...")
-                 ax1.set_aspect('equal', adjustable='box')
-                 # Si lo anterior falla, puedes probar 'auto' o comentar la linea:
-                 # ax1.set_aspect('auto')
-
+                 print("    Líneas del mapa graficadas (o intentado - ORDEN CAMBIADO).")
+                 # Control de aspecto (igual que antes)
+                 try:
+                     all_map_data = pd.concat([ref_plot_data, lap_plot_data]).dropna(subset=map_cols)
+                     if not all_map_data.empty:
+                         mean_latitude = all_map_data[lat_col].mean()
+                         if not pd.isna(mean_latitude):
+                             print(f"    Aplicando ax1.set_aspect() con latitud media: {mean_latitude:.4f} grados")
+                             ax1.set_aspect(1.0 / np.cos(np.radians(mean_latitude)), adjustable='box')
+                         else: ax1.set_aspect('auto')
+                     else: ax1.set_aspect('auto')
+                 except Exception as aspect_e:
+                     print(f"    Error aplicando set_aspect: {aspect_e}. Usando aspecto por defecto.")
+                     ax1.set_aspect('auto')
             else:
                  ax1.text(0.5, 0.5, 'Datos Lat/Lon insuficientes tras NaNs.', ha='center', va='center', transform=ax1.transAxes)
                  print("    ADVERTENCIA: No se graficó el mapa Lat/Lon por falta de datos válidos.")
 
         except Exception as e:
-            print(f"--- ERROR durante el ploteo del mapa Lat/Lon: {e} ---")
+            print(f"--- ERROR durante el ploteo del mapa Lat/Lon (Orden Invertido): {e} ---")
             ax1.text(0.5, 0.5, f'Error al graficar mapa Lat/Lon:\n{e}', ha='center', va='center', transform=ax1.transAxes)
             ax1.set_xlabel('Longitud (deg)'); ax1.set_ylabel('Latitud (deg)'); ax1.grid(True)
     else:
+        # Mensaje si faltan columnas Lat/Lon
         ax1.text(0.5, 0.5, 'Columnas Longitude/Latitude no encontradas', ha='center', va='center', transform=ax1.transAxes)
         ax1.grid(True)
         ax1.set_xlabel('Longitud (deg)'); ax1.set_ylabel('Latitud (deg)')
+
 
     # --- Subplot 2: Delta Time ---
     # (Sin cambios)
     ax2 = axs[1]; ax2.set_title('Delta Time vs Distancia')
     if can_plot_delta and delta_time is not None and aligned_base_dist is not None:
-        # *** IMPORTANTE: Graficar Delta en ax2 ***
         ax2.plot(aligned_base_dist, delta_time, label=f'Delta Tiempo (V{lap_number} vs Ref V{reference_lap_number})', color='purple', linewidth=1.5)
         ax2.axhline(0, color='black', linestyle='--', linewidth=0.7)
         if len(delta_time) > 1:
@@ -244,11 +278,10 @@ def plot_delta_analysis_dashboard(df_telemetry, metadata, lap_number, reference_
                 ax2.set_ylim(y_min, y_max)
             except Exception as e: print(f"Dashboard: Advertencia - ajuste límites Y Delta: {e}")
         ax2.set_ylabel('Ganancia(+) / Pérdida(-) (s)'); ax2.grid(True); ax2.legend()
-        # *** Añadir etiqueta eje X a ax2 ya que no se comparte ***
-        ax2.set_xlabel('Distancia en Vuelta (m)')
+        ax2.set_xlabel('Distancia en Vuelta (m)') # Asumiendo sharex=False
     else:
         ax2.text(0.5, 0.5, 'Delta Time no disponible/calculable', ha='center', va='center', transform=ax2.transAxes); ax2.grid(True)
-        ax2.set_xlabel('Distancia en Vuelta (m)') # Añadir etiqueta aunque esté vacío
+        ax2.set_xlabel('Distancia en Vuelta (m)') # Asumiendo sharex=False
 
     # --- Subplot 3: Acelerador / Freno Superpuesto ---
     # (Sin cambios)
@@ -257,7 +290,6 @@ def plot_delta_analysis_dashboard(df_telemetry, metadata, lap_number, reference_
         input_lap_data = lap_data_full.dropna(subset=input_cols + [dist_col])
         input_ref_lap_data = ref_lap_data_full.dropna(subset=input_cols + [dist_col])
         if not input_lap_data.empty and not input_ref_lap_data.empty:
-             # *** IMPORTANTE: Graficar Inputs en ax3 ***
             ax3.plot(input_lap_data[dist_col], input_lap_data[throttle_col], label=f'Acel V{lap_number}', color='green', linewidth=1.5, alpha=0.9)
             ax3.plot(input_lap_data[dist_col], input_lap_data[brake_col], label=f'Freno V{lap_number}', color='red', linewidth=1.5, alpha=0.9)
             ax3.plot(input_ref_lap_data[dist_col], input_ref_lap_data[throttle_col], label=f'Acel Ref V{reference_lap_number}', color='limegreen', linestyle='--', linewidth=1, alpha=0.7)
@@ -267,9 +299,8 @@ def plot_delta_analysis_dashboard(df_telemetry, metadata, lap_number, reference_
         else: ax3.text(0.5, 0.5, 'Datos Acel/Freno insuficientes tras NaNs', ha='center', va='center', transform=ax3.transAxes); ax3.grid(True)
     else: ax3.text(0.5, 0.5, 'Columnas Acel/Freno no encontradas', ha='center', va='center', transform=ax3.transAxes); ax3.grid(True)
 
-    # --- Ajustar Límites X (Solo para ax3 si no se comparte) ---
-    # La lógica anterior de xlim_to_set afectaba a axs[0] asumiendo sharex=True
-    # Ahora debemos aplicarlo a ax3 (o a todos si sharex vuelve a ser True)
+    # --- Ajustar Límites X ---
+    # (Sin cambios, aplica a ax2 y ax3 si sharex=False)
     xlim_to_set = None
     track_length_m = None
     try:
@@ -286,10 +317,9 @@ def plot_delta_analysis_dashboard(df_telemetry, metadata, lap_number, reference_
          data_max = np.nanmax(aligned_base_dist)
          if data_min < data_max: xlim_to_set = (data_min, data_max)
     if xlim_to_set:
-        # Aplicar a ax2 y ax3 ya que ax1 tiene Lon como X
+        print(f"Dashboard: Aplicando límites eje X (Distancia) a ax2 y ax3: {xlim_to_set}")
         ax2.set_xlim(xlim_to_set)
         ax3.set_xlim(xlim_to_set)
-
 
     # --- Mostrar el Dashboard ---
     plt.tight_layout(rect=[0, 0.03, 1, 0.96])
