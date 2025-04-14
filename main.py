@@ -1,149 +1,102 @@
-# main.py (Corregido con nombres de función reales)
+# main.py (v7 - Corregido ValueError en prompt de Análisis Delta)
 import pandas as pd
 import numpy as np
 import os
 import sys
-import traceback # Para imprimir errores detallados
+import traceback
 
-# Importar funciones de los otros módulos del proyecto con los nombres correctos
+# Importar funciones (sin cambios)
 try:
-    # Nombre corregido de la función en data_loader.py
-    from data_loader import load_and_process_telemetry_csv
-    # Nombre corregido de la función en plotter.py
-    from plotter import create_combined_lap_dashboard
+    from data_loader import load_telemetry_csv
+    from plotter import plot_lap_speed_profile, plot_lap_inputs, plot_lap_engine, plot_delta_analysis_dashboard
 except ImportError as e:
     print(f"Error: No se pudieron importar módulos o funciones necesarias.")
-    print(f"Asegúrate de que 'data_loader.py' contiene 'load_and_process_telemetry_csv'")
-    print(f"y 'plotter.py' contiene 'create_combined_lap_dashboard'.")
     print(f"Detalle del error: {e}")
-    sys.exit(1) # Salir si los módulos principales no están
+    sys.exit(1)
 
 # --- Funciones Auxiliares ---
-
+# (format_time sin cambios)
 def format_time(seconds):
     """Formatea segundos en MM:SS.ms"""
-    if pd.isna(seconds) or not np.isfinite(seconds) or seconds < 0: # Añadido chequeo isfinite
-        return "N/A"
-    if isinstance(seconds, np.timedelta64):
-         seconds = seconds.total_seconds()
-    elif not isinstance(seconds, (int, float, np.number)):
-         return "Invalid Type"
-
-    minutes = int(seconds // 60)
-    secs = int(seconds % 60)
-    millis = int(round((seconds - minutes * 60 - secs) * 1000)) # Cálculo más robusto de ms
-    if millis >= 1000:
-        secs += 1
-        millis -= 1000
-        if secs >= 60:
-            minutes +=1
-            secs -= 60
-
+    if pd.isna(seconds) or not np.isfinite(seconds) or seconds < 0: return "N/A"
+    if isinstance(seconds, np.timedelta64): seconds = seconds.total_seconds()
+    elif not isinstance(seconds, (int, float, np.number)): return "Invalid Type"
+    minutes = int(seconds // 60); secs = int(seconds % 60)
+    millis = int(round((seconds - minutes * 60 - secs) * 1000))
+    if millis >= 1000: secs += 1; millis -= 1000
+    if secs >= 60: minutes +=1; secs -= 60
     return f"{minutes:02d}:{secs:02d}.{millis:03d}"
 
-# --- Lógica Mejorada de Cálculo de Vueltas ---
-
+# --- Lógica de Cálculo de Vueltas ---
+# (calculate_laps_improved v4 sin cambios)
 def calculate_laps_improved(df, min_lap_time_threshold=60):
-    """
-    Calcula tiempos de vuelta, identifica Out/In laps y valida rigurosamente.
-    (Misma función que antes)
-    """
-    required_cols = ['Time', 'Lap', 'LapDistPct', 'IsLapValid']
+    """Calcula tiempos de vuelta basado en fin vuelta anterior."""
+    required_cols = ['Time', 'Lap', 'IsLapValid']
     if not all(col in df.columns for col in required_cols):
         missing_cols = [col for col in required_cols if col not in df.columns]
         raise ValueError(f"DataFrame must contain required columns. Missing: {missing_cols}")
-
     df = df.sort_values('Time').reset_index(drop=True)
-
-    if df['IsLapValid'].dtype != bool:
-        try:
-            # Mapeo explícito para conversión segura a booleano
+    if 'IsLapValid' not in df.columns:
+         print("Advertencia: Columna 'IsLapValid' no encontrada.")
+         df['IsLapValid'] = True
+    elif df['IsLapValid'].dtype != bool:
+         try:
             valid_map = {'True': True, 'False': False, '1': True, '0': False, 1: True, 0: False, 1.0: True, 0.0: False, True: True, False: False}
-            # Aplicar el mapeo, los valores no encontrados serán NaN -> False
+            original_type = df['IsLapValid'].dtype
             df['IsLapValid'] = df['IsLapValid'].map(valid_map).fillna(False).astype(bool)
-            print("Columna 'IsLapValid' convertida a booleano.")
-        except Exception as e:
-            print(f"Advertencia: No se pudo convertir 'IsLapValid' a booleano. Tratando valores no True como False. Error: {e}")
-            # Intento alternativo más simple si el mapeo falla
+            if not pd.api.types.is_bool_dtype(original_type): print("Columna 'IsLapValid' convertida a booleano.")
+         except Exception as e:
+            print(f"Advertencia: No se pudo convertir 'IsLapValid'. Error: {e}")
             df['IsLapValid'] = df['IsLapValid'].apply(lambda x: str(x).lower() in ['true', '1', '1.0'])
-
-
-    crossing_indices = df[
-        (df['LapDistPct'].shift(1).fillna(0) > 0.9) &
-        (df['LapDistPct'] < 0.1) &
-        (df['Lap'] != df['Lap'].shift(1))
-    ].index
-
-    if len(crossing_indices) == 0:
-        print("Advertencia: No se detectaron cruces de línea de meta válidos.")
-        return pd.DataFrame(columns=['Lap', 'LapType', 'StartTime', 'EndTime', 'LapTime', 'FormattedTime', 'IsLapValidSource', 'IsTimeValid', 'IsComplete'])
-
-    crossing_times = df.loc[crossing_indices, 'Time'].tolist()
-    crossing_laps_finished = df.loc[crossing_indices - 1, 'Lap'].tolist()
-
+    lap_change_indices = df[df['Lap'] != df['Lap'].shift(1)].index
+    cut_indices = pd.Index([0]).union(lap_change_indices - 1).union(pd.Index([len(df) - 1]))
+    cut_indices = cut_indices.unique().sort_values()
+    cut_indices = cut_indices[cut_indices >= 0]
+    if len(cut_indices) < 3:
+        print("Advertencia: No se detectaron suficientes cambios de vuelta.")
+        return pd.DataFrame()
     lap_data = []
-    processed_laps = set()
-
-    # --- Out Lap ---
-    first_crossing_time = crossing_times[0]
-    first_crossing_idx = crossing_indices[0]
-    outlap_num = int(df.loc[first_crossing_idx - 1, 'Lap'])
-    outlap_start_time = df['Time'].iloc[0]
-    outlap_end_time = first_crossing_time
-    outlap_valid_source = df.loc[0:first_crossing_idx-1, 'IsLapValid'].all()
-
-    lap_data.append({
-        'Lap': outlap_num, 'LapType': 'Out Lap', 'StartTime': outlap_start_time,
-        'EndTime': outlap_end_time, 'LapTime': outlap_end_time - outlap_start_time,
-        'FormattedTime': format_time(outlap_end_time - outlap_start_time),
-        'IsLapValidSource': outlap_valid_source, 'IsTimeValid': False, 'IsComplete': False
-    })
-    processed_laps.add(outlap_num)
-
-    # --- Timed Laps ---
-    for i in range(len(crossing_times) - 1):
-        start_time = crossing_times[i]
-        end_time = crossing_times[i+1]
-        lap_num = int(df.loc[crossing_indices[i+1] - 1, 'Lap'])
-
-        if lap_num in processed_laps: continue
-
-        lap_time_secs = end_time - start_time
-        start_idx = crossing_indices[i]
-        end_idx = crossing_indices[i+1] - 1
+    for i in range(len(cut_indices) - 1):
+        start_idx = cut_indices[i] + 1 if i > 0 else 0; end_idx = cut_indices[i+1]
+        if start_idx >= len(df) or end_idx < start_idx: continue
+        lap_num = int(df.loc[start_idx, 'Lap'])
+        start_time = df.loc[start_idx, 'Time']; end_time = df.loc[end_idx, 'Time']
+        lap_time_secs = df.loc[cut_indices[i+1], 'Time'] - df.loc[cut_indices[i], 'Time'] if i < len(cut_indices)-1 else np.nan
+        lap_type = 'Timed Lap'; is_complete = True
+        if i == 0: lap_type = 'Out Lap'; is_complete = False; lap_time_secs = end_time - df.loc[0, 'Time']
+        if i == len(cut_indices) - 2: lap_type = 'In Lap'; is_complete = False; lap_time_secs = df.loc[len(df)-1, 'Time'] - start_time
         is_valid_source = df.loc[start_idx:end_idx, 'IsLapValid'].all()
-        is_valid_time_threshold = lap_time_secs >= min_lap_time_threshold
+        is_valid_time_threshold = (lap_time_secs >= min_lap_time_threshold) if pd.notna(lap_time_secs) else False
+        is_time_valid = False
+        # Reajuste lógico para identificar correctamente Timed vs In Lap al final
+        if is_complete: # Solo puede ser Timed si es completa teóricamente
+             if lap_type == 'Timed Lap': # Si aún no se marcó como In/Out
+                 is_time_valid = is_valid_source and is_valid_time_threshold
+        # Si es el penúltimo segmento (última vuelta completa potencial)
+        if i == len(cut_indices) - 3:
+             # Calcular tiempo de esta vuelta completa potencial
+             full_lap_time = df.loc[cut_indices[i+1], 'Time'] - df.loc[cut_indices[i], 'Time']
+             if is_valid_source and full_lap_time >= min_lap_time_threshold:
+                 lap_type = 'Timed Lap' # Confirmar como Timed Lap válida
+                 is_complete = True
+                 is_time_valid = True
+                 lap_time_secs = full_lap_time # Usar el tiempo calculado entre cortes
+             else: # Si no es válida o es muy corta, sigue siendo Timed pero no válida
+                 lap_type = 'Timed Lap'
+                 is_complete = True
+                 is_time_valid = False
+                 lap_time_secs = full_lap_time
+        elif i == len(cut_indices) - 2: # El último segmento siempre es In Lap
+             lap_type = 'In Lap'
+             is_complete = False
+             is_time_valid = False
+             lap_time_secs = df.loc[len(df)-1, 'Time'] - start_time
 
-        lap_data.append({
-            'Lap': lap_num, 'LapType': 'Timed Lap', 'StartTime': start_time,
-            'EndTime': end_time, 'LapTime': lap_time_secs,
-            'FormattedTime': format_time(lap_time_secs),
-            'IsLapValidSource': is_valid_source,
-            'IsTimeValid': is_valid_source and is_valid_time_threshold,
-            'IsComplete': True,
-        })
-        processed_laps.add(lap_num)
-
-    # --- In Lap ---
-    last_crossing_time = crossing_times[-1]
-    last_crossing_idx = crossing_indices[-1]
-    final_time = df['Time'].iloc[-1]
-    inlap_num = int(df.loc[df.index[-1], 'Lap'])
-
-    if final_time > last_crossing_time and inlap_num not in processed_laps:
-        inlap_start_time = last_crossing_time
-        inlap_end_time = final_time
-        inlap_valid_source = df.loc[last_crossing_idx:, 'IsLapValid'].all()
-
-        lap_data.append({
-            'Lap': inlap_num, 'LapType': 'In Lap', 'StartTime': inlap_start_time,
-            'EndTime': inlap_end_time, 'LapTime': inlap_end_time - inlap_start_time,
-            'FormattedTime': format_time(inlap_end_time - inlap_start_time),
-            'IsLapValidSource': inlap_valid_source, 'IsTimeValid': False, 'IsComplete': False
-        })
-        processed_laps.add(inlap_num)
-
-    laps_df = pd.DataFrame(lap_data).sort_values(by='StartTime').reset_index(drop=True)
+        if not is_complete and lap_type not in ['Out Lap', 'In Lap']: lap_time_secs = np.nan
+        lap_data.append({'Lap': lap_num, 'LapType': lap_type, 'StartTime': start_time, 'EndTime': end_time,
+                         'LapTime': lap_time_secs, 'FormattedTime': format_time(lap_time_secs),
+                         'IsLapValidSource': is_valid_source, 'IsTimeValid': is_time_valid, 'IsComplete': is_complete})
+    laps_df = pd.DataFrame(lap_data)
     laps_df = laps_df[['Lap', 'LapType', 'StartTime', 'EndTime', 'LapTime', 'FormattedTime', 'IsLapValidSource', 'IsTimeValid', 'IsComplete']]
     return laps_df
 
@@ -153,162 +106,144 @@ def main():
     """Función principal que orquesta la carga, análisis y visualización."""
     print("--- Iniciando RennsportTelemetryTool ---")
 
-    while True:
+    while True: # Bucle principal por archivo
         file_path = input("\nPor favor, pega la ruta completa al archivo Telemetry.csv y presiona Enter: \n"
                           "Ruta al archivo (o deja vacío para salir): ").strip()
-
-        if not file_path:
-            print("Saliendo...")
-            break
-
-        if not os.path.exists(file_path):
-            print(f"Error: El archivo '{file_path}' no existe.")
-            continue
-        if not file_path.lower().endswith('.csv'):
-            print(f"Error: El archivo '{os.path.basename(file_path)}' no parece ser un archivo CSV.")
-            continue
+        if not file_path: print("Saliendo..."); break
+        if not os.path.exists(file_path): print(f"Error: Archivo '{file_path}' no existe."); continue
+        if not file_path.lower().endswith('.csv'): print(f"Error: '{os.path.basename(file_path)}' no es CSV."); continue
 
         print(f"Archivo encontrado: {file_path}")
 
-        # --- Carga de Datos ---
-        df_cleaned = None
-        metadata = {}
+        # Carga de Datos
+        df_cleaned = None; metadata = {}
         try:
             print(f"Intentando cargar archivo: {os.path.basename(file_path)}")
-            # --- LLAMADA CORREGIDA ---
-            df_cleaned, metadata = load_and_process_telemetry_csv(file_path)
-            if df_cleaned is None or df_cleaned.empty:
-                print("Error: No se pudieron cargar los datos o el archivo está vacío.")
-                continue
-            print(f"Carga y limpieza completadas. DataFrame con {df_cleaned.shape[0]} filas y {df_cleaned.shape[1]} columnas.")
+            df_cleaned, metadata = load_telemetry_csv(file_path)
+            if df_cleaned is None or df_cleaned.empty: print("Error: No se cargaron datos."); continue
+            print(f"Carga y limpieza completadas. DF con {df_cleaned.shape[0]} filas y {df_cleaned.shape[1]} columnas.")
+            if metadata: print("\n--- Metadatos Extraídos ---"); [print(f"- {k}: {v}") for k, v in metadata.items()]
+            else: print("\nNo se encontraron metadatos.")
+        except Exception as e: print(f"\nError crítico carga: {e}"); traceback.print_exc(); continue
 
-            if metadata:
-                print("\n--- Metadatos Extraídos ---")
-                for key, value in metadata.items():
-                    print(f"- {key}: {value}")
-            else:
-                print("\nNo se encontraron metadatos.")
-
-        except Exception as e:
-            print(f"\nError crítico durante la carga de datos: {e}")
-            traceback.print_exc()
-            continue
-
-        # --- Cálculo de Vueltas ---
-        laps_info_df = pd.DataFrame()
-        best_lap_row = None
-        slowest_lap_row = None
-        available_laps_for_analysis = []
-
-        print("\n--- Calculando Tiempos de Vuelta (Método Mejorado) ---")
+        # Cálculo de Vueltas
+        laps_info_df = pd.DataFrame(); best_lap_row = None; slowest_lap_row = None; available_laps_for_analysis = []
+        print("\n--- Calculando Tiempos de Vuelta (v4 - Basado en fin vuelta anterior) ---")
         try:
             track_length_m = metadata.get('Track Length M', None)
             if track_length_m and isinstance(track_length_m, (int, float)) and track_length_m > 0:
-                 min_lap_time = (track_length_m / (41.6 * 0.7))
-                 min_lap_time = max(30, min_lap_time) # Mínimo 30s
-                 print(f"(Usando umbral mínimo de tiempo: > {min_lap_time:.1f}s basado en longitud de pista)")
-            else:
-                 min_lap_time = 60
-                 print(f"(Usando umbral mínimo de tiempo fijo: > {min_lap_time}s)")
-
-            laps_info_df = calculate_laps_improved(df_cleaned, min_lap_time_threshold=min_lap_time)
-
+                 min_lap_time = max(30, (track_length_m / (41.6 * 0.7))); print(f"(Usando umbral mínimo: > {min_lap_time:.1f}s)")
+            else: min_lap_time = 60; print(f"(Usando umbral mínimo fijo: > {min_lap_time}s)")
+            laps_info_df = calculate_laps_improved(df_cleaned, min_lap_time_threshold=min_lap_time) # Llama a v4
             if not laps_info_df.empty:
                 print("Tiempos de vuelta calculados:")
                 laps_display_df = laps_info_df[['Lap', 'LapType', 'LapTime', 'FormattedTime', 'IsTimeValid']].copy()
                 laps_display_df['LapTime'] = laps_display_df['LapTime'].round(3)
                 laps_display_df.rename(columns={'LapTime': 'Tiempo (s)', 'FormattedTime': 'Tiempo Formateado', 'IsTimeValid': 'Valida'}, inplace=True)
-                print(laps_display_df.to_string(index=False))
-
+                print(laps_display_df[laps_display_df['Tiempo Formateado'] != "N/A"].to_string(index=False)) # Corrección v5 aplicada
                 valid_timed_laps = laps_info_df[(laps_info_df['IsTimeValid']) & (laps_info_df['LapType'] == 'Timed Lap')]
-
                 if not valid_timed_laps.empty:
                     best_lap_row = valid_timed_laps.loc[valid_timed_laps['LapTime'].idxmin()]
                     slowest_lap_row = valid_timed_laps.loc[valid_timed_laps['LapTime'].idxmax()]
                     median_lap_time = valid_timed_laps['LapTime'].median()
-                    print(f"\nMEJOR VUELTA VÁLIDA encontrada: Vuelta {int(best_lap_row['Lap'])} ({best_lap_row['FormattedTime']})")
-                    print(f"VUELTA MÁS LENTA VÁLIDA encontrada: Vuelta {int(slowest_lap_row['Lap'])} ({slowest_lap_row['FormattedTime']})")
-                    print(f"Tiempo mediano válido: {format_time(median_lap_time)}")
-                else:
-                    print("\nNo se encontraron vueltas cronometradas válidas.")
-
+                    print(f"\nMEJOR VÁLIDA: Vuelta {int(best_lap_row['Lap'])} ({best_lap_row['FormattedTime']})")
+                    print(f"PEOR VÁLIDA: Vuelta {int(slowest_lap_row['Lap'])} ({slowest_lap_row['FormattedTime']})")
+                    print(f"Mediana válida: {format_time(median_lap_time)}")
+                else: print("\nNo se encontraron vueltas cronometradas válidas.")
                 available_laps_for_analysis = sorted(laps_info_df['Lap'].unique().astype(int).tolist())
-                print(f"\nVueltas detectadas en el log: {available_laps_for_analysis}")
-            else:
-                print("No se pudo calcular información de vueltas.")
+                print(f"\nVueltas detectadas: {available_laps_for_analysis}")
+            else: print("No se pudo calcular info de vueltas.")
+        except Exception as e: print(f"\nError calculando tiempos: {e}"); traceback.print_exc()
 
-        except Exception as e:
-            print(f"\nError calculando tiempos de vuelta: {e}")
-            traceback.print_exc()
+        # --- Bucle de Selección de Vuelta y Análisis ---
+        if not available_laps_for_analysis: print("\nNo hay vueltas disponibles para analizar."); continue
 
-        # --- Selección de Vuelta y Visualización ---
-        if not available_laps_for_analysis:
-             print("\nNo hay vueltas disponibles para analizar.")
-             continue
+        while True: # Bucle selección de vuelta
+            lap_prompt = "\n¿Vuelta a analizar?"
+            lap_details = []
+            # Usar best_lap_row de forma segura aquí también
+            if best_lap_row is not None: lap_details.append(f"Mejor V{int(best_lap_row['Lap'])}: {best_lap_row['FormattedTime']}")
+            if slowest_lap_row is not None: lap_details.append(f"Peor V{int(slowest_lap_row['Lap'])}: {slowest_lap_row['FormattedTime']}")
+            if lap_details: lap_prompt += f" ({'; '.join(lap_details)})"
+            lap_prompt += f"\n(Vueltas: {available_laps_for_analysis}. Num o 'Q' para nuevo archivo): "
+            lap_choice = input(lap_prompt).strip().upper()
 
-        while True:
-            prompt = "\n¿Qué vuelta deseas analizar?"
-            # Construcción dinámica del prompt
-            details = []
-            if best_lap_row is not None: details.append(f"Mejor V: V{int(best_lap_row['Lap'])} - {best_lap_row['FormattedTime']}")
-            if slowest_lap_row is not None: details.append(f"Peor V: V{int(slowest_lap_row['Lap'])} - {slowest_lap_row['FormattedTime']}")
-            if details: prompt += f" ({'; '.join(details)})"
-            prompt += f"\n(Vueltas disponibles: {available_laps_for_analysis}. Escribe el número o 'Q' para salir/nuevo archivo): "
-
-            choice = input(prompt).strip().upper()
-
-            if choice == 'Q': break
+            if lap_choice == 'Q': break
 
             try:
-                selected_lap_num = int(choice)
-                if selected_lap_num not in available_laps_for_analysis:
-                    print(f"Error: El número de vuelta {selected_lap_num} no está entre las disponibles.")
-                    continue
+                selected_lap_num = int(lap_choice)
+                if selected_lap_num not in available_laps_for_analysis: print(f"Error: Vuelta {selected_lap_num} no disponible."); continue
 
                 print(f"\n--- Analizando Vuelta {selected_lap_num} ---")
-
                 lap_info_selected_rows = laps_info_df[laps_info_df['Lap'] == selected_lap_num]
-                if lap_info_selected_rows.empty:
-                    print(f"Error: No se encontró información para la vuelta {selected_lap_num} en el resumen.")
-                    continue
-                lap_info_selected = lap_info_selected_rows.iloc[0] # Tomar la primera fila si hubiera duplicados
+                if lap_info_selected_rows.empty: print(f"Error: No info para vuelta {selected_lap_num}."); continue
+                lap_info_selected = lap_info_selected_rows.iloc[0]
+                df_lap_filtered = df_cleaned[(df_cleaned['Time'] >= lap_info_selected['StartTime']) & (df_cleaned['Time'] <= lap_info_selected['EndTime'])].copy()
+                if df_lap_filtered.empty: print(f"Error: No data para V{selected_lap_num} ({lap_info_selected['StartTime']:.3f}-{lap_info_selected['EndTime']:.3f})."); continue
 
-                # Filtrar DataFrame principal usando StartTime y EndTime calculados
-                df_lap_filtered = df_cleaned[
-                    (df_cleaned['Time'] >= lap_info_selected['StartTime']) &
-                    # Incluir el EndTime exacto si es posible, o ir ligeramente más allá para asegurar inclusión
-                    (df_cleaned['Time'] <= lap_info_selected['EndTime'])
-                ].copy()
+                # --- Menú de Selección de Informes ---
+                while True: # Bucle selección de informe
+                    print("\n--- Menú de Informes ---")
+                    print("1: Perfil de Velocidad vs Distancia")
+                    print("2: Entradas del Piloto (Acel/Freno/Volante) vs Distancia")
+                    print("3: Motor (RPM/Marcha) vs Distancia")
+                    print("4: Análisis Delta vs Vuelta de Referencia")
+                    print("5: TODOS los informes individuales (1, 2, 3)")
+                    print("Q: Volver a selección de vuelta")
+                    report_choice = input("Elige una opción: ").strip().upper()
 
-                if df_lap_filtered.empty:
-                     print(f"Error: No se encontraron datos para la vuelta {selected_lap_num} entre {lap_info_selected['StartTime']} y {lap_info_selected['EndTime']}.")
-                     # Podría ser un problema si StartTime == EndTime o muy cercano
-                     if lap_info_selected['StartTime'] == lap_info_selected['EndTime']:
-                         print("StartTime y EndTime son iguales, no se pueden filtrar datos.")
-                     continue
+                    if report_choice == 'Q': break # Salir menú informes
 
+                    try:
+                        if report_choice == '1':
+                            print("\nGenerando: Perfil de Velocidad..."); plot_lap_speed_profile(df_lap_filtered, metadata, selected_lap_num); print("Informe generado.")
+                        elif report_choice == '2':
+                            print("\nGenerando: Entradas del Piloto..."); plot_lap_inputs(df_lap_filtered, metadata, selected_lap_num); print("Informe generado.")
+                        elif report_choice == '3':
+                            print("\nGenerando: Motor..."); plot_lap_engine(df_lap_filtered, metadata, selected_lap_num); print("Informe generado.")
+                        elif report_choice == '4':
+                            print("\n--- Análisis Delta ---")
+                            valid_timed_laps_for_delta = laps_info_df[(laps_info_df['IsTimeValid']) & (laps_info_df['LapType'] == 'Timed Lap') & (laps_info_df['Lap'] != selected_lap_num)]
+                            if valid_timed_laps_for_delta.empty:
+                                print("No hay otras vueltas válidas para usar como referencia."); continue
 
-                # --- LLAMADA CORREGIDA A PLOTTING ---
-                try:
-                    print("Generando gráficos...")
-                    # Pasar el DataFrame filtrado, el número de vuelta y el resumen completo de vueltas
-                    create_combined_lap_dashboard(df_lap_filtered, selected_lap_num, laps_info_df)
-                    print("Gráficos generados/mostrados.")
-                # Capturar explícitamente NameError y otros posibles errores
-                except NameError:
-                     print("Error: La función 'create_combined_lap_dashboard' no está definida o importada correctamente desde plotter.py.")
-                     traceback.print_exc()
-                except Exception as e:
-                    print(f"Error durante la generación de gráficos para la vuelta {selected_lap_num}: {e}")
-                    traceback.print_exc()
+                            available_ref_laps = sorted(valid_timed_laps_for_delta['Lap'].astype(int).tolist())
+                            # --- CORRECCIÓN AQUÍ: Comprobar si best_lap_row NO es None ---
+                            ref_lap_prompt = f"Elige la vuelta de REFERENCIA para comparar con V{selected_lap_num}\n(Disponibles: {available_ref_laps}, Mejor Válida: V{int(best_lap_row['Lap']) if best_lap_row is not None else 'N/A'}. 'C' para cancelar): "
+                            ref_choice = input(ref_lap_prompt).strip().upper()
 
-            except ValueError:
-                print("Error: Entrada inválida. Por favor, introduce un número de vuelta o 'Q'.")
-            except Exception as e:
-                 print(f"Error inesperado durante el análisis de la vuelta: {e}")
-                 traceback.print_exc()
+                            if ref_choice == 'C': continue
 
-        print("\nVolviendo a la selección de archivo...")
+                            try:
+                                selected_ref_lap_num = int(ref_choice)
+                                if selected_ref_lap_num not in available_ref_laps:
+                                    print(f"Error: Vuelta ref {selected_ref_lap_num} no válida."); continue
 
+                                print(f"\nGenerando: Análisis Delta (V{selected_lap_num} vs Ref V{selected_ref_lap_num})...")
+                                # Pasar df completo, la función filtra internamente
+                                plot_delta_analysis_dashboard(df_cleaned, metadata, selected_lap_num, selected_ref_lap_num)
+                                print("Informe generado.")
+
+                            except ValueError: print("Error: Entrada inválida para vuelta ref.")
+                            except Exception as e_delta: print(f"Error delta: {e_delta}"); traceback.print_exc()
+
+                        elif report_choice == '5':
+                            print("\nGenerando TODOS los informes individuales...")
+                            try: plot_lap_speed_profile(df_lap_filtered, metadata, selected_lap_num)
+                            except Exception as e1: print(f"Error plot 1: {e1}")
+                            try: plot_lap_inputs(df_lap_filtered, metadata, selected_lap_num)
+                            except Exception as e2: print(f"Error plot 2: {e2}")
+                            try: plot_lap_engine(df_lap_filtered, metadata, selected_lap_num)
+                            except Exception as e3: print(f"Error plot 3: {e3}")
+                            print("Informes individuales generados.")
+                        else: print("Error: Opción inválida.")
+                    except NameError as ne: print(f"Error: Falta función en plotter.py? {ne}"); traceback.print_exc()
+                    except Exception as e_plot: print(f"Error generando informe: {e_plot}"); traceback.print_exc()
+                # Fin bucle while selección informe
+
+            except ValueError: print("Error: Entrada inválida para número vuelta.")
+            except Exception as e: print(f"Error inesperado análisis vuelta: {e}"); traceback.print_exc()
+        # Fin bucle while selección vuelta
+        print("\nVolviendo a selección de archivo...")
 if __name__ == "__main__":
     main()
