@@ -311,7 +311,7 @@ Responde de forma estructurada y precisa.
             json={
                 "model": model_name,
                 "messages": messages,
-                "max_tokens": 1000,
+                "max_tokens": 1500,
                 "temperature": 0.3,
                 "stream": False
             },
@@ -350,7 +350,7 @@ Responde de forma estructurada y precisa.
 # --- Función de Síntesis Final (PROMPT MEJORADO - Versión Final) ---
 def synthesize_driving_advice(
     initial_context, brake_analysis, throttle_analysis, gear_analysis,
-    speed_analysis, trackmap_analysis, model_endpoint=None, model_name=DEFAULT_TEXT_MODEL ):
+    speed_analysis, trackmap_analysis, steering_analysis=None, model_endpoint=None, model_name=DEFAULT_TEXT_MODEL ):
     """Genera resumen final conciso estilo Race Coach Pro."""
     endpoint = model_endpoint or get_lm_studio_endpoint()
     if not endpoint: return "[Error: Endpoint no determinado para síntesis]"
@@ -379,8 +379,9 @@ def synthesize_driving_advice(
         f"- Piloto Referencia (más rápido): {initial_context['reference_driver']} (Vuelta: {initial_context['reference_lap_time']})\n"
         f"- Delta total: {initial_context.get('delta_time', 'N/A')} s\n\n"
 
-        f"📊 **Análisis IA por Canal:**\n"
+        f"📊 **Análisis IA por Canal (Generado automáticamente por IA de Visión):**\n\n"
         f"{analysis_text.strip()}\n\n"
+        f"---\n\n"
 
         f"🎯 **Objetivo del Resumen:**\n"
         f"Redacta un resumen técnico y accionable con los **4 a 5 puntos de mejora más relevantes** para que {initial_context['slower_driver']} reduzca la diferencia con {initial_context['faster_driver']}.\n"
@@ -400,8 +401,8 @@ def synthesize_driving_advice(
         response = requests.post(
             f"{endpoint}/v1/chat/completions", headers={"Content-Type": "application/json"},
             json={ "model": model_name, "messages": [{"role": "user", "content": synthesis_prompt}],
-                   "max_tokens": 1000, "temperature": 0.5, "stream": False },
-            timeout=120 )
+                   "max_tokens": 1500, "temperature": 0.5, "stream": False },
+            timeout=300 )
         if response.status_code != 200: print(f"Error Síntesis: Status={response.status_code}"); return f"[Error servidor LLM ({response.status_code}) Síntesis]"
         response_json = response.json()
         try:
@@ -423,7 +424,7 @@ def test_connection( model_endpoint=None, model_name=DEFAULT_TEXT_MODEL ):
     try:
         response = requests.post(
             f"{endpoint}/v1/chat/completions", headers={"Content-Type": "application/json"},
-            json={ "model": model_name, "messages": [{"role": "user", "content": "Answer only with the result of the sum 9+1"}],
+            json={ "model": model_name, "messages": [{"role": "user", "content": "Responde solamente cuanto es 9+1, sin nigún detalle o texto extra"}],
                    "temperature": 0.1, "max_tokens": 20, "stream": False },
             timeout=60 ) # Timeout más Largo
         response.raise_for_status()
