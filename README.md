@@ -163,7 +163,6 @@ La generación del resumen final está guiada por un prompt de tipo "instrucció
 
 ---
 
-## 🔗 Badges (opcional para GitHub)
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![LM Studio](https://img.shields.io/badge/LLM-Vision%2BText-green)
