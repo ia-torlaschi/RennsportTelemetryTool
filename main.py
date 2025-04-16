@@ -225,9 +225,13 @@ def run_ai_analysis_workflow():
     if text_llm_ok and session_context and valid_analyses_count > 0:
         print(f"\nPASO 3: Generando Síntesis Final ({valid_analyses_count} análisis válidos)...")
         final_summary = synthesize_driving_advice(
-            initial_context=session_context, brake_analysis=analyses.get("Brake"), throttle_analysis=analyses.get("Throttle"),
-            gear_analysis=analyses.get("Gear"), speed_analysis=analyses.get("Speed"), trackmap_analysis=analyses.get("TrackMap"),
-            model_name=DEFAULT_TEXT_MODEL )
+                initial_context=session_context,
+                brake_analysis=analyses.get("Brake"),
+                throttle_analysis=analyses.get("Throttle"),
+                gear_analysis=analyses.get("Gear"),
+                speed_analysis=analyses.get("Speed"),
+                trackmap_analysis=analyses.get("TrackMap"),
+                model_name=DEFAULT_TEXT_MODEL )
     elif not text_llm_ok: print("\nAdv: Síntesis no posible (LLM Texto no disponible).")
     elif not session_context: print("\nAdv: Síntesis no posible (Contexto no construido).")
     else: print("\nAdv: Síntesis no posible (No hay análisis VLM válidos).")
