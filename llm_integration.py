@@ -200,98 +200,151 @@ def extract_context_from_laptime_image(image_path):
 # --- Función de Análisis VLM (PROMPTS MEJORADOS - Versión Final) ---
 def analyze_telemetry_comparison_graph(
     image_path,
-    graph_type, # "Brake", "Throttle", "Gear", "Speed", "TrackMap"
-    context,    # Contexto completo construido en main.py
+    graph_type,  # "Brake", "Throttle", "Gear", "Speed", "TrackMap", "Steering"
+    context,     # Contexto completo construido en main.py
     model_endpoint=None,
     model_name=DEFAULT_VLM_MODEL
 ):
-    """Analiza gráfico VLM con manejo de respuesta y logging mejorados."""
+    """Analiza gráfico VLM con prompt personalizado y contexto completo."""
     endpoint = model_endpoint or get_lm_studio_endpoint()
-    if not endpoint: return "[Error: Endpoint LM Studio no determinado]"
+    if not endpoint:
+        return "[Error: Endpoint LM Studio no determinado]"
+
     image_filename = os.path.basename(image_path) if image_path else "N/A"
 
-    required_keys = ["target_driver", "reference_driver", "faster_driver", "slower_driver", "target_color", "reference_color", "target_lap_time", "reference_lap_time"]
+    required_keys = [
+        "target_driver", "reference_driver", "faster_driver", "slower_driver",
+        "target_color", "reference_color", "target_lap_time", "reference_lap_time"
+    ]
     if not context or not all(context.get(k) for k in required_keys):
-         print(f"Error: Contexto COMPLETO inválido para VLM {graph_type}"); print("Contexto:", context)
-         return "[Error: Contexto (manual+OCR) inválido/incompleto para VLM]"
+        print(f"Error: Contexto COMPLETO inválido para VLM {graph_type}")
+        print("Contexto:", context)
+        return "[Error: Contexto (manual+OCR) inválido/incompleto para VLM]"
 
     print(f"Analizando gráfico de {graph_type}: {image_filename} con {model_name}")
     print(f"Contexto VLM: {context['target_driver']} ({context['target_color']}) vs {context['reference_driver']} ({context['reference_color']})")
 
-    response = None # Inicializar para el bloque finally
     try:
         base64_image = encode_image_to_base64(image_path)
         image_data_url = f"data:image/jpeg;base64,{base64_image}"
 
-        # --- Prompt Base y Details (Sin cambios respecto a vFinal_v3) ---
-        prompt_base = ( f"Actúa como **Race Coach Pro**...") # ... (restante igual)
-        slower_driver_name = context['slower_driver']
-        if graph_type == "Brake": prompt_details = (f"   - **Punto de Frenada:** ...") # ... (restante igual)
-        elif graph_type == "Throttle": prompt_details = (f"   - **Transición Freno-Acelerador:** ...") # ... (restante igual)
-        elif graph_type == "Gear": prompt_details = (f"   - **Puntos de Cambio:** ...") # ... (restante igual)
-        elif graph_type == "Speed": prompt_details = (f"   - **Velocidad Mínima (Apex):** ...") # ... (restante igual)
-        elif graph_type == "TrackMap": prompt_details = (f"   - **Punto de Giro (Turn-in):** ...") # ... (restante igual)
-        else: prompt_details = f"2. Análisis comparativo general..."
-        prompt_text = prompt_base + prompt_details
-        messages = [ { "role": "user", "content": [ {"type": "text", "text": prompt_text}, {"type": "image_url", "image_url": {"url": image_data_url}} ] } ]
-        # --- Fin Prompts ---
+        # --- Descripciones específicas por tipo de gráfico ---
+        graph_instructions = {
+            "Brake": (
+                "Analiza la curva de frenado en cada sector del circuito. "
+                "Identifica si el piloto destino frena más temprano o más tarde que el piloto referencia, y si aplica más o menos presión. "
+                "Evalúa duración y progresividad de la frenada, especialmente en entrada a curva. "
+                "Detecta posibles zonas de pérdida por exceso de precaución o por frenadas agresivas mal posicionadas."
+            ),
+            "Throttle": (
+                "Analiza cómo aplica el acelerador el piloto destino respecto al piloto referencia, especialmente en salida de curvas. "
+                "Detecta si hay retrasos en el inicio de aceleración, aplicaciones parciales inseguras o picos abruptos. "
+                "Revisa la transición del freno al gas, y si mantiene buena tracción al acelerar."
+            ),
+            "Gear": (
+                "Compara los puntos de cambio de marcha entre ambos pilotos. "
+                "Evalúa si el piloto destino realiza cambios anticipados o tardíos, especialmente antes de curva o al salir de ellas. "
+                "Detecta errores de sincronización que puedan comprometer la aceleración o generar rebotes de motor."
+            ),
+            "Speed": (
+                "Compara las curvas de velocidad de ambos pilotos. "
+                "En rectas, verifica si el piloto destino alcanza menor velocidad punta. "
+                "En curvas, revisa si la velocidad mínima (apex) es más baja, lo cual puede indicar frenadas excesivas o mal trazado. "
+                "Detecta si acelera tarde al salir de curvas o si pierde velocidad por trayectorias largas."
+            ),
+            "TrackMap": (
+                "Analiza las líneas de trayectoria de ambos pilotos a lo largo de todo el circuito. "
+                "Identifica si el piloto destino recorre más distancia, se abre demasiado en curvas o tiene líneas irregulares. "
+                "Evalúa consistencia, eficiencia de radios de giro, y cómo posiciona el coche en entrada y salida de curvas. "
+                "Si se sospechan correcciones de volante o sobreconducción por la forma de la trazada, indícalo incluso si no se ve el volante."
+            ),
+            "Steering": (
+                "Analiza cómo gira el volante el piloto destino a lo largo de la vuelta, especialmente en entrada, apex y salida de curva. "
+                "Detecta si hay giros demasiado bruscos, correcciones múltiples o signos de sobreconducción. "
+                "Evalúa si el ángulo de giro coincide con una trazada limpia o si denota inseguridad o agresividad excesiva. "
+                "Indica si el estilo de dirección puede estar afectando el ritmo o la línea óptima."
+            )
+        }
+        graph_prompt = graph_instructions.get(graph_type, "Describe diferencias clave en el comportamiento entre ambas líneas.")
+
+        # --- Construcción del Prompt completo ---
+        prompt_text = f"""
+Eres **Race Coach Pro**, un ingeniero de pista virtual especializado en análisis de telemetría y simracing de alto nivel.
+
+Estás analizando una imagen comparativa llamada **{image_filename}**, correspondiente al circuito **{context.get('track_name', 'N/A')}**. Esta imagen fue generada desde software profesional tipo MoTeC i2pro y representa el canal: **{graph_type.upper()}**.
+
+🔹 **Piloto objetivo (línea {context['target_color']}):** {context['target_driver']} — Mejor vuelta: {context['target_lap_time']}  
+🔸 **Piloto referencia (línea {context['reference_color']}):** {context['reference_driver']} — Mejor vuelta: {context['reference_lap_time']}  
+📉 **Delta entre pilotos:** {context.get('delta_time', 'N/A')} segundos
+
+---
+
+🎯 **Tarea:**  
+Compara la actuación de ambos pilotos en esta imagen de telemetría.  
+{graph_prompt}
+
+📌 **Objetivo:**  
+Detecta diferencias claras, errores cometidos y oportunidades específicas de mejora para **{context['target_driver']}** (línea {context['target_color']}).  
+Ofrece un análisis técnico y accionable. Indica exactamente **qué hace diferente** el piloto referencia que el destino debería ajustar.
+
+⚠️ **IMPORTANTE:**  
+No describas el software ni su interfaz. No repitas obviedades visuales. No hagas suposiciones sin base en la imagen.  
+Concéntrate en diferencias clave y en qué mejorar desde la perspectiva de coaching profesional.
+
+Responde de forma estructurada y precisa.
+""".strip()
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt_text},
+                    {"type": "image_url", "image_url": {"url": image_data_url}}
+                ]
+            }
+        ]
 
         print(f"Enviando petición VLM a {endpoint} (Timeout: 300s)...")
         response = requests.post(
-            f"{endpoint}/v1/chat/completions", headers={"Content-Type": "application/json"},
-            json={ "model": model_name, "messages": messages, "max_tokens": 1000, "temperature": 0.3, "stream": False },
-            timeout=300 # Timeout extendido
+            f"{endpoint}/v1/chat/completions",
+            headers={"Content-Type": "application/json"},
+            json={
+                "model": model_name,
+                "messages": messages,
+                "max_tokens": 1000,
+                "temperature": 0.3,
+                "stream": False
+            },
+            timeout=300
         )
         print(f"[{graph_type}] VLM Response Status Code: {response.status_code}")
-
-        # Lanzar excepción para errores HTTP (4xx, 5xx)
         response.raise_for_status()
 
-        # --- Procesamiento de Respuesta con Logging Detallado ---
-        response_json = None
-        analysis_content = None
+        # --- Procesamiento de la respuesta ---
+        response_text = response.text
         try:
-            print(f"[{graph_type}] Intentando decodificar JSON...")
-            # Leer el texto completo ANTES de intentar decodificar
-            response_text = response.text
-            # Intentar decodificar
             response_json = json.loads(response_text)
-            print(f"[{graph_type}] JSON decodificado OK.")
-            # print(f"[{graph_type}] JSON Recibido: {json.dumps(response_json, indent=2)}") # DEBUG: Opcional/Verboso
+            choices = response_json.get("choices", [])
+            if choices and isinstance(choices, list):
+                content = choices[0].get("message", {}).get("content")
+                if content and isinstance(content, str):
+                    print(f"[{graph_type}] Análisis VLM OK.")
+                    return content.strip()
 
-            # Extraer contenido de forma segura
-            choices = response_json.get("choices")
-            if choices and isinstance(choices, list) and len(choices) > 0:
-                message = choices[0].get("message")
-                if message and isinstance(message, dict):
-                     content = message.get("content")
-                     if content and isinstance(content, str):
-                          analysis_content = content.strip()
-
-            if analysis_content: # Éxito real
-                print(f"[{graph_type}] Análisis VLM OK.")
-                return analysis_content
-            else: # Contenido vacío o estructura rara
-                 print(f"¡¡¡ ADVERTENCIA [{graph_type}] !!! Contenido VLM vacío/inesperado post-decodificación.")
-                 print(f"JSON Recibido: {response_json}")
-                 return f"[Error: Contenido VLM vacío/inesperado ({graph_type})]"
+            print(f"¡¡¡ ADVERTENCIA [{graph_type}] !!! Contenido VLM vacío/inesperado.")
+            print(f"JSON Recibido: {response_json}")
+            return f"[Error: Contenido VLM vacío/inesperado ({graph_type})]"
 
         except json.JSONDecodeError as json_err:
-            print(f"¡¡¡ ERROR [{graph_type}] !!! Error decodificando JSON VLM: {json_err}")
-            print(f"Respuesta Texto (primeros 1000 chars): {response_text[:1000]}") # Usar response_text guardado
-            return f"[Error: Respuesta VLM no es JSON válido ({graph_type})]"
-        except (AttributeError, KeyError, IndexError, TypeError, ValueError) as e:
-             print(f"¡¡¡ ERROR [{graph_type}] !!! Error parseando estructura JSON VLM: {e}")
-             print(f"JSON Recibido (si se decodificó): {response_json}")
-             return f"[Error: Parseando respuesta VLM ({graph_type})]"
-        # --- Fin Procesamiento Respuesta ---
+            print(f"¡¡¡ ERROR [{graph_type}] !!! Error decodificando JSON: {json_err}")
+            print(f"Texto de respuesta (parcial): {response_text[:1000]}")
+            return f"[Error: JSON inválido recibido ({graph_type})]"
 
-    except requests.exceptions.Timeout: print(f"¡¡¡ ERROR [{graph_type}] !!! Timeout VLM (300s)."); return f"[Error: Timeout VLM (300s) para {graph_type}]"
-    except requests.exceptions.RequestException as e: print(f"¡¡¡ ERROR [{graph_type}] !!! Error Conexión/HTTP VLM: {e}"); return f"[Error red/HTTP VLM para {graph_type}]"
-    except FileNotFoundError: print(f"Error VLM: Archivo no encontrado - {image_path}"); return f"[Error: Archivo no encontrado - {image_path}]"
-    except Exception as e: print(f"¡¡¡ ERROR [{graph_type}] !!! Error inesperado VLM: {e}"); traceback.print_exc(); return f"[Error inesperado VLM para {graph_type}]"
-    # finally: # Opcional: ver si la respuesta se cerró
-    #      if response is not None: print(f"[{graph_type}] Response closed: {response.raw.closed if hasattr(response, 'raw') else 'N/A'}")
+    except Exception as e:
+        print(f"¡¡¡ ERROR [{graph_type}] !!! Excepción general: {e}")
+        traceback.print_exc()
+        return f"[Error: Excepción durante análisis VLM ({graph_type})]"
+
 
 
 # --- Función de Síntesis Final (PROMPT MEJORADO - Versión Final) ---
@@ -308,7 +361,7 @@ def synthesize_driving_advice(
 
     # Construir texto con los análisis disponibles
     analysis_text = ""; analysis_count = 0
-    analysis_map = {"Freno": brake_analysis, "Acelerador": throttle_analysis, "Marcha": gear_analysis, "Velocidad": speed_analysis, "Trazada": trackmap_analysis}
+    analysis_map = {"Freno": brake_analysis, "Acelerador": throttle_analysis, "Marcha": gear_analysis, "Velocidad": speed_analysis, "Trazada": trackmap_analysis, "Volante": steering_analysis }
     for key, analysis in analysis_map.items():
         status = "N/A o Error."
         if analysis and isinstance(analysis, str) and not analysis.startswith('['): status = analysis; analysis_count += 1
@@ -317,22 +370,29 @@ def synthesize_driving_advice(
 
     # Prompt de síntesis final
     synthesis_prompt = (
-        f"Actúa como **Race Coach Pro**. Tu tarea es generar un resumen final y conciso de coaching para el piloto más lento.\n\n"
-        f"**Contexto General de la Comparación:**\n"
-        f"* Pista: {initial_context.get('track_name', 'N/A')}\n"
-        f"* Piloto Destino (analizado, traza AZUL): {initial_context['target_driver']} (Mejor vuelta: {initial_context['target_lap_time']})\n"
-        f"* Piloto Referencia (traza NO AZUL): {initial_context['reference_driver']} (Mejor vuelta: {initial_context['reference_lap_time']})\n"
-        f"* Piloto más rápido: {initial_context['faster_driver']}\n"
-        f"* Piloto más lento (a mejorar): {initial_context['slower_driver']}\n"
-        f"* Delta (aprox): {initial_context.get('delta_time', 'N/A')} s\n\n"
-        f"**Resúmenes de Análisis por Canal (Generados por IA de Visión):**\n"
+        f"Eres **Race Coach Pro**, un ingeniero de pista virtual especializado en análisis de simracing.\n"
+        f"Tu tarea es sintetizar los análisis previos y generar un resumen final de coaching para el piloto más lento.\n\n"
+        
+        f"📍 **Contexto de la Comparación:**\n"
+        f"- Pista: {initial_context.get('track_name', 'N/A')}\n"
+        f"- Piloto Destino (más lento, línea azul): {initial_context['target_driver']} (Vuelta: {initial_context['target_lap_time']})\n"
+        f"- Piloto Referencia (más rápido): {initial_context['reference_driver']} (Vuelta: {initial_context['reference_lap_time']})\n"
+        f"- Delta total: {initial_context.get('delta_time', 'N/A')} s\n\n"
+
+        f"📊 **Análisis IA por Canal:**\n"
         f"{analysis_text.strip()}\n\n"
-        f"**Instrucciones para el Resumen Final:**\n"
-        f"1. NO repitas literalmente los análisis detallados.\n"
-        f"2. Sintetiza la información anterior y extrae los **4-5 puntos de mejora MÁS IMPORTANTES** para que '{initial_context['slower_driver']}' reduzca la diferencia con '{initial_context['faster_driver']}'. Prioriza los puntos que aparezcan en múltiples análisis si es posible.\n"
-        f"3. Formula cada punto como un **consejo claro, accionable y específico** (ej. 'Retrasa punto frenada Curva X', 'Aplica acelerador antes salida Curva Y', 'Corrige trazada en Z').\n"
-        f"4. Sé conciso y profesional.\n"
-        f"5. Dirígete directamente a '{initial_context['slower_driver']}'.\n\n"
+
+        f"🎯 **Objetivo del Resumen:**\n"
+        f"Redacta un resumen técnico y accionable con los **4 a 5 puntos de mejora más relevantes** para que {initial_context['slower_driver']} reduzca la diferencia con {initial_context['faster_driver']}.\n"
+        f"Usa un lenguaje profesional, claro y directo. Evita repetir literalmente lo anterior. Prioriza las recomendaciones que aparezcan en múltiples gráficos.\n\n"
+
+        f"✅ **Estructura sugerida para cada consejo:**\n"
+        f"- Breve título del punto.\n"
+        f"- Qué diferencia observaste.\n"
+        f"- Qué debería hacer el piloto para mejorar.\n\n"
+
+        f"📌 Dirige los consejos directamente a {initial_context['slower_driver']}. Mantén el tono de ingeniero de pista técnico.\n\n"
+
         f"**Resumen de Coaching para {initial_context['slower_driver']}:**"
     )
 

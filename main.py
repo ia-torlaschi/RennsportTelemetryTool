@@ -122,7 +122,7 @@ def run_ai_analysis_workflow():
     # --- PASO 1: Obtener Contexto Inicial ---
     print("\nPASO 1: Contexto Inicial")
     while True:
-        laptime_image_path = input("Introduce la ruta a la imagen de TIEMPOS POR VUELTA (ej. image_fa49c3.png): ").strip()
+        laptime_image_path = input("Introduce la ruta a la imagen de TIEMPOS POR VUELTA (ej. Times.png): ").strip()
         if not laptime_image_path: print("Entrada vacía, abortando."); return
         if os.path.exists(laptime_image_path): break
         else: print(f"Error: Archivo '{laptime_image_path}' no encontrado.")
@@ -202,7 +202,7 @@ def run_ai_analysis_workflow():
     if not vlm_ok: print("ERROR CRÍTICO: VLM no disponible."); return
 
     # --- PASO 2: Analizar Gráficos Individuales ---
-    graph_types_to_analyze = ["Brake", "Throttle", "Gear", "Speed", "TrackMap"]
+    graph_types_to_analyze = ["Brake", "Throttle", "Gear", "Speed", "TrackMap", "Steering"]
     analyses = {gt: None for gt in graph_types_to_analyze}; graph_paths = {}
     for graph_type in graph_types_to_analyze:
         print(f"\nPASO 2: Análisis del Gráfico de {graph_type}")
