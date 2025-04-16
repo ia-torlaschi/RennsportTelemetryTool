@@ -1,4 +1,4 @@
-# main.py (vFinal Definitiva - OCR Tiempos + Input Ref + 5 Gráficos + Func. Original)
+# main.py (vFinal Definitiva - OCR Tiempos + Input Ref + 5 Gráficos + Func. Original + Corrección Dashboard Call)
 
 import pandas as pd
 import numpy as np
@@ -18,11 +18,11 @@ except ImportError as e:
     print("Asegúrate que data_loader.py y plotter.py estén en el directorio correcto.")
     sys.exit(1)
 
-# --- Importar funciones de IA (Usando nombres finales de llm_integration.py) ---
+# --- Importar funciones de IA (Usando nombres finales de llm_integration.py vFinal Definitiva) ---
 try:
     # Asegúrate que llm_integration.py (versión final) esté en el mismo directorio o PYTHONPATH
     from llm_integration import (
-        extract_context_from_laptime_image, # Función OCR final para imagen de tiempos
+        extract_context_from_laptime_image, # Nombre función OCR actualizada
         analyze_telemetry_comparison_graph,
         synthesize_driving_advice,
         test_connection,
@@ -46,85 +46,73 @@ def format_time(seconds):
     if isinstance(seconds, np.timedelta64): seconds = seconds.total_seconds()
     elif not isinstance(seconds, (int, float, np.number)): return "Invalid Type"
     minutes = int(seconds // 60); secs = int(seconds % 60); millis = int(round((seconds - minutes * 60 - secs) * 1000))
-    if millis >= 1000: secs += 1; millis = 0 # Corrección si millis llega a 1000
+    if millis >= 1000: secs += 1; millis = 0 # Corrección
     if secs >= 60: minutes +=1; secs -= 60
     return f"{minutes:02d}:{secs:02d}.{millis:03d}"
 
 
-# --- Lógica de Cálculo de Vueltas (Copiada de tu versión v11) ---
+# --- Lógica de Cálculo de Vueltas (Copiada de tu versión v11, con validación robusta) ---
 def calculate_laps_improved(df, min_lap_time_threshold=60):
     """Calcula tiempos de vuelta basado en fin vuelta anterior."""
     required_cols = ['Time', 'Lap', 'IsLapValid']
     if not all(col in df.columns for col in required_cols): raise ValueError(f"Faltan cols: {[c for c in required_cols if c not in df.columns]}")
     df = df.sort_values('Time').reset_index(drop=True)
-    # Asegurar que IsLapValid existe y es booleano
-    if 'IsLapValid' not in df.columns:
-        print("Adv: Columna 'IsLapValid' no encontrada. Asumiendo todas las vueltas como válidas en origen.")
-        df['IsLapValid'] = True
+    # Asegurar IsLapValid
+    if 'IsLapValid' not in df.columns: print("Adv: 'IsLapValid' no encontrada. Asumiendo True."); df['IsLapValid'] = True
     elif df['IsLapValid'].dtype != bool:
-        print("Adv: Convirtiendo 'IsLapValid' a booleano...")
+        print("Adv: Convirtiendo 'IsLapValid' a booleano...");
         try:
             valid_map = {'True': True, 'False': False, '1': True, '0': False, 1: True, 0: False, 1.0: True, 0.0: False, True: True, False: False}
-            # Intentar mapeo directo y luego conversión forzada si falla
             df['IsLapValid'] = df['IsLapValid'].map(valid_map).fillna(df['IsLapValid'].apply(lambda x: str(x).lower() in ['true', '1', '1.0'])).astype(bool)
             print("'IsLapValid' convertida.")
-        except Exception as e:
-            print(f"Error convirtiendo 'IsLapValid': {e}. Intentando conversión simple.")
-            df['IsLapValid'] = df['IsLapValid'].apply(lambda x: str(x).lower() in ['true', '1', '1.0'])
+        except Exception as e: print(f"Error convirtiendo 'IsLapValid': {e}. Intentando simple."); df['IsLapValid'] = df['IsLapValid'].apply(lambda x: str(x).lower() in ['true', '1', '1.0'])
 
     lap_change_indices = df[df['Lap'] != df['Lap'].shift(1)].index
-    cut_indices = pd.Index([0]).union(lap_change_indices - 1).union(pd.Index([len(df) - 1])).unique().sort_values()
+    cut_indices = pd.Index([0]).union(lap_change_indices[lap_change_indices > 0] - 1).union(pd.Index([len(df) - 1])).unique().sort_values()
     cut_indices = cut_indices[cut_indices >= 0]
-    if len(cut_indices) < 3: print("Adv: No suficientes cambios de vuelta detectados para análisis detallado."); return pd.DataFrame()
+    if len(cut_indices) < 2: print("Adv: No suficientes puntos de corte."); return pd.DataFrame()
+    if len(cut_indices) < 3: print("Adv: Menos de 3 puntos corte, no habrá tiempos completos.")
 
     lap_data = []
     for i in range(len(cut_indices) - 1):
-        start_idx = cut_indices[i] + 1 if i > 0 else 0
-        end_idx = cut_indices[i+1]
-        if start_idx >= len(df) or end_idx < start_idx: continue
+        start_idx = cut_indices[i] + 1 if i > 0 else 0; end_idx = cut_indices[i+1]
+        if start_idx >= len(df) or end_idx < start_idx or end_idx >= len(df): continue
 
-        try: # Validar datos en los índices antes de usarlos
-            lap_num = int(df.loc[start_idx, 'Lap'])
-            start_time = df.loc[start_idx, 'Time']
-            end_time = df.loc[end_idx, 'Time']
-            t_start_lap = df.loc[cut_indices[i], 'Time']
-            t_end_lap = df.loc[cut_indices[i+1], 'Time']
-            # Asegurar que IsLapValid exista en el slice
-            is_valid_source = df.loc[start_idx:end_idx, 'IsLapValid'].all() if start_idx <= end_idx else False
-        except (KeyError, ValueError, TypeError) as e:
-             print(f"Adv: Error de datos/tipo en índices {start_idx}-{end_idx} (Lap {df.loc[start_idx, 'Lap'] if 'Lap' in df.columns else 'N/A'}). Saltando. Error: {e}")
-             continue
+        try: # Validar datos antes de usar
+            lap_num_val = df.iloc[start_idx]['Lap']
+            if pd.isna(lap_num_val): raise ValueError("Lap NaN")
+            lap_num = int(lap_num_val)
+            start_time = df.iloc[start_idx]['Time']; end_time = df.iloc[end_idx]['Time']
+            t_start_lap = df.iloc[cut_indices[i]]['Time']; t_end_lap = df.iloc[cut_indices[i+1]]['Time']
+            if not all(isinstance(t, (int, float, np.number)) for t in [start_time, end_time, t_start_lap, t_end_lap]): raise TypeError("Tipo tiempo no numérico")
+            is_valid_source = df.iloc[start_idx:end_idx+1]['IsLapValid'].all() if start_idx <= end_idx else False
+        except (KeyError, ValueError, TypeError, IndexError) as e: print(f"Adv: Error datos/tipo Lap {df.iloc[start_idx]['Lap'] if start_idx<len(df) else 'N/A'}. Saltando. Error: {e}"); continue
 
         lap_time_secs = np.nan; is_complete = False; lap_type = 'Unknown'
         if i == 0: lap_type = 'Out Lap'
         elif i == len(cut_indices) - 2: lap_type = 'In Lap'
-        else: lap_type = 'Timed Lap'; is_complete = True # Asumir completa
+        else: lap_type = 'Timed Lap'; is_complete = True
 
-        # Calcular tiempo si es posible
         try: lap_time_secs = t_end_lap - t_start_lap
-        except TypeError: print(f"Adv: Error tipo calculando LapTime Lap {lap_num}."); lap_time_secs = np.nan
+        except TypeError: print(f"Adv: Error tipo LapTime Lap {lap_num}."); lap_time_secs = np.nan
 
-        # Validar tiempo solo para vueltas cronometradas
         is_time_valid = False
-        if lap_type == 'Timed Lap' and pd.notna(lap_time_secs) and lap_time_secs >= min_lap_time_threshold:
-            is_time_valid = is_valid_source # Considerar válido solo si la fuente y el tiempo lo son
-        else:
-            is_complete = False # Marcar como incompleta si no es Timed o no cumple umbral/validez fuente
+        if lap_type == 'Timed Lap' and pd.notna(lap_time_secs) and lap_time_secs >= min_lap_time_threshold: is_time_valid = is_valid_source
+        else: is_complete = False
 
         lap_data.append({'Lap': lap_num, 'LapType': lap_type, 'StartTime': start_time, 'EndTime': end_time,
                          'LapTime': lap_time_secs, 'FormattedTime': format_time(lap_time_secs),
                          'IsLapValidSource': is_valid_source, 'IsTimeValid': is_time_valid, 'IsComplete': is_complete})
 
-    if not lap_data: return pd.DataFrame() # Devolver DF vacío si no se procesó ninguna vuelta
-
+    if not lap_data: return pd.DataFrame()
     laps_df = pd.DataFrame(lap_data)
     laps_df = laps_df[['Lap', 'LapType', 'StartTime', 'EndTime', 'LapTime', 'FormattedTime', 'IsLapValidSource', 'IsTimeValid', 'IsComplete']]
     return laps_df
 
 
-# --- Función Workflow IA (ACTUALIZADA - Versión Final) ---
+# --- Función Workflow IA (Versión Final - OCR Tiempos + Input Ref + 5 Gráficos) ---
 def run_ai_analysis_workflow():
-    """Orquesta: OCR Tiempos -> Input Manual Ref (+Confirmación OCR) -> VLM -> Síntesis."""
+    """Orquesta: OCR Tiempos -> Input Manual Ref (+Confirmación OCR) -> VLM (5 Gráficos) -> Síntesis."""
     print("\n--- Análisis de Comparación Asistido por IA ---")
     if not AI_ENABLED: print("Error: Módulos IA no cargados."); return
 
@@ -133,10 +121,11 @@ def run_ai_analysis_workflow():
 
     # --- PASO 1: Obtener Contexto Inicial ---
     print("\nPASO 1: Contexto Inicial")
-    while True: # Bucle para asegurar que la imagen existe
+    while True:
         laptime_image_path = input("Introduce la ruta a la imagen de TIEMPOS POR VUELTA (ej. image_fa49c3.png): ").strip()
+        if not laptime_image_path: print("Entrada vacía, abortando."); return
         if os.path.exists(laptime_image_path): break
-        else: print(f"Error: Archivo '{laptime_image_path}' no encontrado. Intenta de nuevo.")
+        else: print(f"Error: Archivo '{laptime_image_path}' no encontrado.")
     ocr_context = extract_context_from_laptime_image(laptime_image_path)
     if ocr_context is None: print("Error: Falló OCR inicial. No se puede continuar."); return
 
@@ -146,31 +135,31 @@ def run_ai_analysis_workflow():
 
     print("\nPASO 1b: Introduce/Confirma Datos Esenciales (usando OCR como sugerencia)")
 
-    # --- Nombre Piloto Destino ---
+    # Nombre Piloto Destino
     suggested_target_name = name1_ocr # Asumir primero como target por defecto
     prompt_target_name = "Confirma TU nombre piloto (destino - AZUL)"
     if suggested_target_name: prompt_target_name += f" [Detectado posible: {suggested_target_name}]"
     prompt_target_name += ": "
-    target_driver_name = input(prompt_target_name).strip() or suggested_target_name
-    if not target_driver_name: print("Error: Nombre piloto destino obligatorio."); return
+    target_driver_name = ""
+    while not target_driver_name:
+         target_driver_name = input(prompt_target_name).strip() or suggested_target_name
+         if not target_driver_name: print("Error: Nombre piloto destino obligatorio.")
 
-    # --- Mejor Tiempo Piloto Destino ---
-    target_best_lap_str = None
-    current_suggestion = target_best_lap_ocr
+    # Mejor Tiempo Piloto Destino
+    target_best_lap_str = None; current_suggestion = target_best_lap_ocr
     while not target_best_lap_str:
-        prompt_target_time = f"Introduce MEJOR vuelta VÁLIDA para {target_driver_name} (formato MM:SS.ms)"
+        prompt_target_time = f"Introduce MEJOR vuelta VÁLIDA para {target_driver_name} (MM:SS.ms)"
         if current_suggestion: prompt_target_time += f" [Sugerencia OCR: {current_suggestion}]"
         prompt_target_time += ": "
         time_input = input(prompt_target_time).strip() or current_suggestion
-        # Validar formato MM:SS.ms (punto o coma, espacios opcionales)
         if time_input and re.match(r"^\d{1,2}\s?:\s?\d{2}\s?[.,]\s?\d{3}$", time_input):
-            target_best_lap_str = time_input.replace(',', '.').replace(' ', '') # Limpiar
+            target_best_lap_str = time_input.replace(',', '.').replace(' ', '')
             break
-        else: print("Formato inválido. Usa MM:SS.ms (ej. 01:37.630)"); current_suggestion = None
+        else: print("Formato inválido. Usa MM:SS.ms"); current_suggestion = None
 
-    # --- Nombre Piloto Referencia ---
+    # Nombre Piloto Referencia
     reference_driver_name = ""; suggested_ref_name = None
-    if name1_ocr and name2_ocr: suggested_ref_name = name2_ocr if target_driver_name.lower() == name1_ocr.lower() else name1_ocr
+    if name1_ocr and name2_ocr: suggested_ref_name = name1_ocr if target_driver_name.lower() == name2_ocr.lower() else name2_ocr
     elif name1_ocr and name1_ocr.lower() != target_driver_name.lower(): suggested_ref_name = name1_ocr
     while not reference_driver_name:
          ref_name_prompt = "Introduce NOMBRE Piloto Referencia (línea NO azul)"
@@ -180,7 +169,7 @@ def run_ai_analysis_workflow():
          if not reference_driver_name: print("Nombre obligatorio.")
          elif reference_driver_name.lower() == target_driver_name.lower(): print("Nombres deben ser diferentes."); reference_driver_name = ""
 
-    # --- Mejor Tiempo Piloto Referencia ---
+    # Mejor Tiempo Piloto Referencia
     reference_best_lap_str = None
     while not reference_best_lap_str:
         time_input = input(f"Introduce MEJOR vuelta VÁLIDA para {reference_driver_name} (MM:SS.ms): ").strip()
@@ -189,11 +178,11 @@ def run_ai_analysis_workflow():
             break
         else: print("Formato inválido. Usa MM:SS.ms")
 
-    # --- Nombre Pista ---
+    # Nombre Pista
     prompt_track = "Nombre de la Pista" + (f" [Detectado: {track_name_ocr}]" if track_name_ocr else "") + " (Opcional): "
     track_name = input(prompt_track).strip() or track_name_ocr or "N/A"
 
-    # --- Construir Contexto Completo ---
+    # Construir Contexto Completo
     session_context = {
         "track_name": track_name, "target_driver": target_driver_name, "target_lap_time": target_best_lap_str,
         "reference_driver": reference_driver_name, "reference_lap_time": reference_best_lap_str,
@@ -203,7 +192,7 @@ def run_ai_analysis_workflow():
         delta_sec = time_target_sec - time_ref_sec; delta_str = f"{delta_sec:+.3f}"
         if delta_sec <= 0: faster = target_driver_name; slower = reference_driver_name
         else: faster = reference_driver_name; slower = target_driver_name
-    else: print("Adv: No se pudo calcular Delta (error en tiempos)."); faster = reference_driver_name; slower = target_driver_name # Asignación fallback
+    else: print("Adv: No se pudo calcular Delta."); faster = reference_driver_name; slower = target_driver_name
     session_context["faster_driver"] = faster; session_context["slower_driver"] = slower; session_context["delta_time"] = delta_str
     print("\nContexto Final Construido:"); print(json.dumps(session_context, indent=2)); print("-" * 30)
 
@@ -217,12 +206,12 @@ def run_ai_analysis_workflow():
     analyses = {gt: None for gt in graph_types_to_analyze}; graph_paths = {}
     for graph_type in graph_types_to_analyze:
         print(f"\nPASO 2: Análisis del Gráfico de {graph_type}")
-        while True: # Bucle para pedir ruta válida o saltar
+        while True:
             graph_image_path = input(f"Ruta a imagen de {graph_type} (o 'saltar'): ").strip()
             if graph_image_path.lower() == 'saltar': print(f"Saltando {graph_type}."); analyses[graph_type]="[Skipped]"; graph_paths[graph_type]=None; break
             elif os.path.exists(graph_image_path): graph_paths[graph_type]=graph_image_path; break
             else: print(f"Error: '{graph_image_path}' no encontrado.")
-        if graph_paths[graph_type] is None: continue # Saltar al siguiente gráfico
+        if graph_paths[graph_type] is None: continue
 
         print(f"Enviando gráfico {graph_type} al VLM ({DEFAULT_VLM_MODEL})...");
         analysis_result = analyze_telemetry_comparison_graph(
@@ -253,7 +242,6 @@ def main():
     while True: # Bucle principal archivo CSV
         file_path = input("\nIntroduce la ruta al archivo CSV de telemetría (o deja vacío para salir): ").strip()
         if not file_path: print("Saliendo..."); break
-        # Validaciones de archivo
         if not os.path.exists(file_path): print(f"Error: '{file_path}' no existe."); continue
         if not file_path.lower().endswith('.csv'): print(f"Error: '{os.path.basename(file_path)}' no parece ser CSV."); continue
 
@@ -267,14 +255,13 @@ def main():
             print(f"Carga OK. {df_cleaned.shape[0]}x{df_cleaned.shape[1]}."); print("Metadatos:", metadata)
 
             print("\nCalculando Tiempos...");
-            # Cálculo Umbral Tiempo Mínimo (igual que antes)
             track_length_m = None; track_meta_key = 'Track Length M'
             if metadata and track_meta_key in metadata:
-                 try: track_length_m = float(str(metadata[track_meta_key]).split(' ')[0]) # Extraer solo número
+                 try: track_length_m = float(str(metadata[track_meta_key]).split(' ')[0])
                  except: print(f"Adv: No se pudo extraer longitud de pista de '{metadata[track_meta_key]}'")
             min_lap_time = 60
-            if track_length_m and track_length_m > 500: min_lap_time = max(30, track_length_m / 40.0); print(f"Umbral T: > {min_lap_time:.1f}s (Est.)")
-            else: print(f"Umbral T: > {min_lap_time}s (Fijo)")
+            if track_length_m and track_length_m > 500: min_lap_time = max(30, track_length_m / 40.0); print(f"Umbral T Válido: > {min_lap_time:.1f} s (Est.)")
+            else: print(f"Umbral T Válido: > {min_lap_time} s (Fijo)")
 
             laps_info_df = calculate_laps_improved(df_cleaned, min_lap_time)
             if not laps_info_df.empty:
@@ -283,7 +270,7 @@ def main():
                 if not valid_timed.empty:
                     best_lap_row = valid_timed.loc[valid_timed['LapTime'].idxmin()]
                     slowest_lap_row = valid_timed.loc[valid_timed['LapTime'].idxmax()]
-                    print(f"Mejor: V{int(best_lap_row['Lap'])} ({best_lap_row['FormattedTime']}) | Peor: V{int(slowest_lap_row['Lap'])} ({slowest_lap_row['FormattedTime']})")
+                    print(f"Mejor Válida: V{int(best_lap_row['Lap'])} ({best_lap_row['FormattedTime']}) | Peor Válida: V{int(slowest_lap_row['Lap'])} ({slowest_lap_row['FormattedTime']})")
                 else: print("No hay vueltas cronometradas válidas.")
                 available_laps_for_analysis = sorted(laps_info_df['Lap'].unique().astype(int).tolist())
                 print(f"Vueltas detectadas: {available_laps_for_analysis}")
@@ -300,17 +287,20 @@ def main():
             main_choice = input("Elige una opción: ").strip().upper()
 
             if main_choice == '1':
-                 # --- Opción 1: Flujo Original de Gráficos ---
+                 # --- Opción 1: Flujo Original de Gráficos (De tu v11 base) ---
                  if not available_laps_for_analysis: print("\nNo hay vueltas disponibles."); continue
                  while True: # Bucle selección vuelta
                      lap_prompt = "\nVuelta para gráficos?"
                      if best_lap_row is not None: lap_prompt += f" (Mejor V{int(best_lap_row['Lap'])})"
+                     # Añadir Peor vuelta si es diferente de la mejor
+                     if slowest_lap_row is not None and (best_lap_row is None or best_lap_row['Lap'] != slowest_lap_row['Lap']): lap_prompt += f" (Peor V{int(slowest_lap_row['Lap'])})"
                      lap_prompt += f" (Vueltas: {available_laps_for_analysis}. 'V' Volver): "
                      lap_choice = input(lap_prompt).strip().upper()
                      if lap_choice == 'V': break
                      try:
                          selected_lap_num = int(lap_choice)
                          if selected_lap_num not in available_laps_for_analysis: print("Vuelta inválida."); continue
+                         print(f"\n--- Preparando datos para gráficos de V{selected_lap_num} ---")
                          lap_info_series = laps_info_df[laps_info_df['Lap'] == selected_lap_num]
                          if lap_info_series.empty: print(f"Info no encontrada V{selected_lap_num}."); continue
                          lap_info = lap_info_series.iloc[0]
@@ -331,17 +321,20 @@ def main():
                                      valid_ref = laps_info_df[(laps_info_df['IsTimeValid']) & (laps_info_df['LapType']=='Timed Lap') & (laps_info_df['Lap']!=selected_lap_num)]
                                      if valid_ref.empty: print("No refs disponibles."); continue
                                      avail_ref_laps = sorted(valid_ref['Lap'].astype(int).tolist())
-                                     ref_prompt = f"Ref para V{selected_lap_num}? (Disp: {avail_ref_laps}): "
+                                     ref_prompt = f"Ref para V{selected_lap_num}? (Disp: {avail_ref_laps}"
+                                     if best_lap_row is not None and best_lap_row['Lap'] != selected_lap_num: ref_prompt += f", Mejor V{int(best_lap_row['Lap'])}"
+                                     ref_prompt += ". 'C' Cancelar): " # Añadir opción Cancelar
                                      ref_choice = input(ref_prompt).strip().upper()
+                                     if ref_choice == 'C': continue # Volver al menú si cancela
                                      try: ref_lap_num = int(ref_choice)
                                      except ValueError: print("Número inválido"); continue
                                      if ref_lap_num not in avail_ref_laps: print("Ref inválida."); continue
                                      print(f"Generando Dashboard V{selected_lap_num} vs V{ref_lap_num}...")
-                                     # Pasar laps_info_df por si plotter lo necesita
+                                     # --- LLAMADA CORREGIDA (4 ARGS) ---
                                      plot_comparison_dashboard(df_cleaned, metadata, selected_lap_num, ref_lap_num)
                                      print("OK.")
                                  elif report_choice == '5': # Todos
-                                     print("Generando TODOS..."); err_p=False
+                                     print(f"Generando TODOS para V{selected_lap_num}..."); err_p=False
                                      try: plot_lap_speed_profile(df_lap, metadata, selected_lap_num)
                                      except Exception as e1: print(f"Err plot 1: {e1}"); err_p=True
                                      try: plot_lap_inputs(df_lap, metadata, selected_lap_num)
@@ -349,14 +342,16 @@ def main():
                                      try: plot_lap_engine(df_lap, metadata, selected_lap_num)
                                      except Exception as e3: print(f"Err plot 3: {e3}"); err_p=True
                                      if not err_p: print("Todos OK.")
+                                     else: print("Generados con errores.")
                                  else: print("Opción inválida.")
+                             except NameError as ne: print(f"Error: Falta función en plotter.py? {ne}"); traceback.print_exc()
                              except Exception as e_p: print(f"Error gráfico: {e_p}")
                      except ValueError: print("Número inválido.")
                      except Exception as e_l: print(f"Error procesando vuelta: {e_l}")
 
             elif main_choice == '2':
                  # --- Opción 2: Flujo IA ---
-                if AI_ENABLED: run_ai_analysis_workflow()
+                if AI_ENABLED: run_ai_analysis_workflow() # Llama a la versión final de workflow
                 else: print("Funcionalidad IA deshabilitada.")
             elif main_choice == 'V': print("Volviendo a selección archivo..."); break
             elif main_choice == 'Q': print("Saliendo..."); sys.exit()
@@ -366,7 +361,6 @@ def main():
 
 if __name__ == "__main__":
     # --- Comprobación Conexión Inicial ---
-    # (Mantenida igual que la última versión)
     if AI_ENABLED:
         print("Comprobando conexión inicial con modelos IA (puede tardar)...")
         try:
@@ -374,6 +368,7 @@ if __name__ == "__main__":
              text_status = test_connection(model_name=DEFAULT_TEXT_MODEL); print(f"- LLM Texto ({DEFAULT_TEXT_MODEL}): {text_status}")
              print("-" * 20)
              if "Error" in vlm_status or "Error" in text_status: print("ADVERTENCIA: Uno o ambos modelos IA no responden.")
+        except NameError: print("Error: Constantes IA no definidas.")
         except Exception as e_test: print(f"Error durante test conexión inicial: {e_test}")
     else: print("Funcionalidad IA deshabilitada.")
     # --- Llamada a main ---
