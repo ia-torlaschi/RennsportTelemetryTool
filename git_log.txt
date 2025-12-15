@@ -1,0 +1,53 @@
+commit 45efcb6d8fd06667ea97f4aa1cd6456355f93711
+Author: ia-torlaschi <jtorlaschi@outlook.es>
+Date:   Mon Dec 15 12:32:19 2025 +0100
+
+            deleted:    data_sample/csv/Telemetry_Jack.csv
+
+D	data_sample/csv/Telemetry_Jack.csv
+
+commit 1e1b97080d72c8e01b9ee9531c6852cc8124e646
+Author: ia-torlaschi <jtorlaschi@outlook.es>
+Date:   Mon Dec 15 12:30:51 2025 +0100
+
+            deleted:    data_sample/csv/Telemetry_Jack.csv
+
+A	data_sample/csv/Telemetry_Jack.csv
+
+commit f57cae9a21fe9220820a1ca4e4986bb06dd35cc1
+Author: ia-torlaschi <jtorlaschi@outlook.es>
+Date:   Sat Nov 29 15:33:51 2025 +0100
+
+    Syncing local changes (clean)
+
+A	.gitattributes
+
+commit 2ec36a3bc7ba54797ef0e5663fc2b978e10ace2c
+Author: ia-torlaschi <jtorlaschi@outlook.es>
+Date:   Mon Jun 16 09:33:32 2025 +0200
+
+            new file:   data_sample/csv/Telemetry_Agus.csv
+            new file:   data_sample/csv/Telemetry_Jack.csv
+            new file:   data_sample/images/Brake.png
+            new file:   data_sample/images/Gear.png
+            new file:   data_sample/images/Speed.png
+            new file:   data_sample/images/Steering.png
+            new file:   data_sample/images/Throttle.png
+            new file:   data_sample/images/Times.png
+            new file:   data_sample/images/Trackmap.png
+
+A	data_sample/images/Brake.png
+A	data_sample/images/Gear.png
+A	data_sample/images/Speed.png
+A	data_sample/images/Steering.png
+A	data_sample/images/Throttle.png
+A	data_sample/images/Times.png
+A	data_sample/images/Trackmap.png
+
+commit c4ef81835318464d492e3f024ccaf7e7aa3cde36
+Author: ia-torlaschi <jtorlaschi@outlook.es>
+Date:   Wed Apr 16 15:54:48 2025 +0200
+
+            modified:   README.md
+
+M	README.md
