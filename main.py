@@ -127,7 +127,9 @@ def run_ai_analysis_workflow():
         if os.path.exists(laptime_image_path): break
         else: print(f"Error: Archivo '{laptime_image_path}' no encontrado.")
     ocr_context = extract_context_from_laptime_image(laptime_image_path)
-    if ocr_context is None: print("Error: Falló OCR inicial. No se puede continuar."); return
+    if ocr_context is None:
+        print("Adv: Falló OCR inicial. Continuando con entrada manual de contexto.")
+        ocr_context = {}
 
     track_name_ocr = ocr_context.get('track_name')
     name1_ocr = ocr_context.get('driver_name_1'); name2_ocr = ocr_context.get('driver_name_2')
@@ -231,6 +233,7 @@ def run_ai_analysis_workflow():
                 gear_analysis=analyses.get("Gear"),
                 speed_analysis=analyses.get("Speed"),
                 trackmap_analysis=analyses.get("TrackMap"),
+                steering_analysis=analyses.get("Steering"),
                 model_name=DEFAULT_TEXT_MODEL )
     elif not text_llm_ok: print("\nAdv: Síntesis no posible (LLM Texto no disponible).")
     elif not session_context: print("\nAdv: Síntesis no posible (Contexto no construido).")

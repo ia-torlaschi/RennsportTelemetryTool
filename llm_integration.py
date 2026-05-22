@@ -15,8 +15,8 @@ import numpy as np # Para float('inf') en conversión de tiempo
 
 # --- Constantes Simples ---
 # Asegúrate de que estos nombres coincidan EXACTAMENTE con los modelos CARGADOS en LM Studio
-DEFAULT_VLM_MODEL = "llava-v1.6-mistral-7b"       # Modelo VLM para analizar gráficos
-DEFAULT_TEXT_MODEL = "meta-llama-3-8b-instruct"  # Modelo LLM Texto para la síntesis
+DEFAULT_VLM_MODEL = "google/gemma-4-e4b"         # Modelo VLM para analizar gráficos
+DEFAULT_TEXT_MODEL = "google/gemma-4-e4b"        # Modelo LLM Texto para la síntesis
 DEFAULT_PORT = 1234                              # Puerto por defecto de LM Studio API
 
 # --- CONFIGURACIÓN TESSERACT (OPCIONAL) ---
@@ -28,6 +28,15 @@ DEFAULT_PORT = 1234                              # Puerto por defecto de LM Stud
 #     print(f"INFO: Usando ruta Tesseract especificada en código: {TESSERACT_CMD_PATH}")
 # except Exception as e:
 #      print(f"ADVERTENCIA: No se pudo establecer tesseract_cmd vía código ({e}). Asegúrate que Tesseract esté en el PATH.")
+
+for _tesseract_path in (
+    os.getenv("TESSERACT_CMD_PATH"),
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files\PDF24\tesseract\tesseract.exe",
+):
+    if _tesseract_path and os.path.exists(_tesseract_path):
+        pytesseract.pytesseract.tesseract_cmd = _tesseract_path
+        break
 
 # --- Funciones de Detección de Endpoint ---
 def detect_windows_host_ip():
@@ -66,6 +75,34 @@ def get_lm_studio_endpoint():
         # Imprimir solo la primera vez
         print(f"Endpoint de LM Studio determinado como: {_cached_endpoint}")
     return _cached_endpoint
+
+
+def extract_lm_studio_message_content(response_json):
+    """Extrae texto útil de respuestas OpenAI-compatible de LM Studio."""
+    choices = response_json.get("choices", [])
+    if not choices or not isinstance(choices, list):
+        return ""
+
+    message = choices[0].get("message", {})
+    content = message.get("content", "")
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+
+    reasoning_content = message.get("reasoning_content", "")
+    if isinstance(reasoning_content, str) and reasoning_content.strip():
+        return reasoning_content.strip()
+
+    return ""
+
+
+def truncate_for_prompt(text, max_chars=1400):
+    """Limita texto largo para no exceder el contexto del modelo local."""
+    if not isinstance(text, str):
+        return ""
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "\n[...recortado para síntesis...]"
 
 # --- Funciones de Utilidad (Imagen) ---
 def encode_image_to_base64(image_source):
@@ -290,8 +327,9 @@ Ofrece un análisis técnico y accionable. Indica exactamente **qué hace difere
 ⚠️ **IMPORTANTE:**  
 No describas el software ni su interfaz. No repitas obviedades visuales. No hagas suposiciones sin base en la imagen.  
 Concéntrate en diferencias clave y en qué mejorar desde la perspectiva de coaching profesional.
+No muestres razonamiento interno, pasos de análisis ni cadenas de pensamiento. Entrega solamente el análisis final.
 
-Responde de forma estructurada y precisa.
+Responde de forma amplia, estructurada y precisa, como un coach de motorsport. Desarrolla el diagnóstico, explica el impacto en el tiempo por vuelta y aporta acciones concretas para practicar.
 """.strip()
 
         messages = [
@@ -311,8 +349,9 @@ Responde de forma estructurada y precisa.
             json={
                 "model": model_name,
                 "messages": messages,
-                "max_tokens": 1500,
+                "max_tokens": 2200,
                 "temperature": 0.3,
+                "reasoning": "off",
                 "stream": False
             },
             timeout=300
@@ -324,12 +363,10 @@ Responde de forma estructurada y precisa.
         response_text = response.text
         try:
             response_json = json.loads(response_text)
-            choices = response_json.get("choices", [])
-            if choices and isinstance(choices, list):
-                content = choices[0].get("message", {}).get("content")
-                if content and isinstance(content, str):
-                    print(f"[{graph_type}] Análisis VLM OK.")
-                    return content.strip()
+            content = extract_lm_studio_message_content(response_json)
+            if content:
+                print(f"[{graph_type}] Análisis VLM OK.")
+                return content
 
             print(f"¡¡¡ ADVERTENCIA [{graph_type}] !!! Contenido VLM vacío/inesperado.")
             print(f"JSON Recibido: {response_json}")
@@ -364,7 +401,9 @@ def synthesize_driving_advice(
     analysis_map = {"Freno": brake_analysis, "Acelerador": throttle_analysis, "Marcha": gear_analysis, "Velocidad": speed_analysis, "Trazada": trackmap_analysis, "Volante": steering_analysis }
     for key, analysis in analysis_map.items():
         status = "N/A o Error."
-        if analysis and isinstance(analysis, str) and not analysis.startswith('['): status = analysis; analysis_count += 1
+        if analysis and isinstance(analysis, str) and not analysis.startswith('['):
+            status = truncate_for_prompt(analysis)
+            analysis_count += 1
         analysis_text += f"--- Análisis de {key} ---\n{status}\n\n"
     if analysis_count == 0: return "[Error: No hay análisis válidos para la síntesis]" # No llamar a LLM si no hay nada que sintetizar
 
@@ -384,13 +423,14 @@ def synthesize_driving_advice(
         f"---\n\n"
 
         f"🎯 **Objetivo del Resumen:**\n"
-        f"Redacta un resumen técnico y accionable con los **4 a 5 puntos de mejora más relevantes** para que {initial_context['slower_driver']} reduzca la diferencia con {initial_context['faster_driver']}.\n"
-        f"Usa un lenguaje profesional, claro y directo. Evita repetir literalmente lo anterior. Prioriza las recomendaciones que aparezcan en múltiples gráficos.\n\n"
+        f"Redacta un resumen técnico, amplio y accionable con los **5 a 7 puntos de mejora más relevantes** para que {initial_context['slower_driver']} reduzca la diferencia con {initial_context['faster_driver']}.\n"
+        f"Usa un lenguaje profesional, claro y directo, con profundidad de coach de motorsport. Evita repetir literalmente lo anterior, pero desarrolla el razonamiento útil para el piloto. Prioriza las recomendaciones que aparezcan en múltiples gráficos.\n\n"
 
         f"✅ **Estructura sugerida para cada consejo:**\n"
-        f"- Breve título del punto.\n"
-        f"- Qué diferencia observaste.\n"
-        f"- Qué debería hacer el piloto para mejorar.\n\n"
+        f"- Título técnico del punto.\n"
+        f"- Qué diferencia observaste y en qué fase de curva o sector se manifiesta.\n"
+        f"- Por qué cuesta tiempo.\n"
+        f"- Qué debería hacer el piloto para mejorar y cómo practicarlo.\n\n"
 
         f"📌 Dirige los consejos directamente a {initial_context['slower_driver']}. Mantén el tono de ingeniero de pista técnico.\n\n"
 
@@ -401,12 +441,15 @@ def synthesize_driving_advice(
         response = requests.post(
             f"{endpoint}/v1/chat/completions", headers={"Content-Type": "application/json"},
             json={ "model": model_name, "messages": [{"role": "user", "content": synthesis_prompt}],
-                   "max_tokens": 1500, "temperature": 0.5, "stream": False },
+                   "max_tokens": 3000, "temperature": 0.5, "reasoning": "off", "stream": False },
             timeout=300 )
-        if response.status_code != 200: print(f"Error Síntesis: Status={response.status_code}"); return f"[Error servidor LLM ({response.status_code}) Síntesis]"
+        if response.status_code != 200:
+            print(f"Error Síntesis: Status={response.status_code}")
+            print(f"Detalle Síntesis: {response.text[:1000]}")
+            return f"[Error servidor LLM ({response.status_code}) Síntesis]"
         response_json = response.json()
         try:
-            summary_content = response_json.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            summary_content = extract_lm_studio_message_content(response_json)
             if not summary_content: raise ValueError("Contenido vacío")
             print("Síntesis OK."); return summary_content
         except (KeyError, IndexError, TypeError, ValueError) as e: print(f"Respuesta Síntesis inesperada: {response_json}. Error: {e}"); return "[Error: Respuesta LLM inesperada (Síntesis)]"
@@ -424,12 +467,12 @@ def test_connection( model_endpoint=None, model_name=DEFAULT_TEXT_MODEL ):
     try:
         response = requests.post(
             f"{endpoint}/v1/chat/completions", headers={"Content-Type": "application/json"},
-            json={ "model": model_name, "messages": [{"role": "user", "content": "Responde solamente cuanto es 9+1, sin nigún detalle o texto extra"}],
-                   "temperature": 0.1, "max_tokens": 20, "stream": False },
+            json={ "model": model_name, "messages": [{"role": "user", "content": "Responde exactamente con la palabra OK. No escribas nada más."}],
+                   "temperature": 0.1, "max_tokens": 8, "reasoning": "off", "stream": False },
             timeout=60 ) # Timeout más Largo
         response.raise_for_status()
         response_json = response.json()
-        content = response_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+        content = extract_lm_studio_message_content(response_json)
         return f"Conexión OK. Respuesta: {content[:60]}..."
     except requests.exceptions.Timeout: return f"Error Conexión: Timeout (60s)."
     except requests.exceptions.RequestException as e: status = e.response.status_code if hasattr(e, 'response') and e.response is not None else "N/A"; return f"Error Conexión/HTTP ({status}): {str(e)[:100]}..."
