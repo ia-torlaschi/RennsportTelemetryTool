@@ -2,6 +2,8 @@
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker # Para formatear ejes Y
+import matplotlib.patches as patches
+from matplotlib.animation import FuncAnimation
 import pandas as pd
 import numpy as np
 import re
@@ -288,6 +290,357 @@ def plot_comparison_dashboard(df_telemetry, metadata, lap_number, reference_lap_
     try: plt.show()
     except Exception as e_show: print(f"Error mostrando gráfico: {e_show}")
     print("Dashboard cerrado.")
+
+
+def plot_live_comparison_replay(df_telemetry, metadata, lap_number, reference_lap_number, sample_points=800, interval_ms=32):
+    """Dashboard dinamico de coach: circuito, pedales, volante, marchas y telemetria comparada."""
+    lap_col, dist_col = 'Lap', 'LapDist'
+    required_cols = [lap_col, dist_col, 'Speed', 'Throttle', 'Brake', 'Steer', 'RPM', 'Gear']
+    missing_cols = [col for col in required_cols if col not in df_telemetry.columns]
+    if missing_cols:
+        print(f"Error Replay Dashboard: Faltan columnas: {missing_cols}")
+        return
+    if not (isinstance(lap_number, int) and isinstance(reference_lap_number, int) and lap_number != reference_lap_number):
+        print("Error Replay Dashboard: Vueltas invalidas.")
+        return
+
+    lap_data = df_telemetry[df_telemetry[lap_col] == lap_number].copy().sort_values(dist_col)
+    ref_data = df_telemetry[df_telemetry[lap_col] == reference_lap_number].copy().sort_values(dist_col)
+    if lap_data.empty or ref_data.empty:
+        print(f"Error Replay Dashboard: Datos insuficientes V{lap_number} o VRef{reference_lap_number}.")
+        return
+
+    def prepare_lap(data):
+        data = data.dropna(subset=[dist_col]).copy()
+        return data.drop_duplicates(subset=[dist_col], keep='first').sort_values(dist_col)
+
+    def interp_series(data, col, distances):
+        if col not in data.columns:
+            return np.full_like(distances, np.nan, dtype=float)
+        valid = data.dropna(subset=[dist_col, col])
+        if valid.empty:
+            return np.full_like(distances, np.nan, dtype=float)
+        x = valid[dist_col].astype(float).to_numpy()
+        y = pd.to_numeric(valid[col], errors='coerce').to_numpy(dtype=float)
+        mask = np.isfinite(x) & np.isfinite(y)
+        if mask.sum() < 2:
+            return np.full_like(distances, y[mask][0] if mask.sum() == 1 else np.nan, dtype=float)
+        return np.interp(distances, x[mask], y[mask])
+
+    def metric_label(value, fmt="{:.1f}"):
+        return fmt.format(value) if np.isfinite(value) else "-"
+
+    lap_data = prepare_lap(lap_data)
+    ref_data = prepare_lap(ref_data)
+    min_dist = max(lap_data[dist_col].min(), ref_data[dist_col].min())
+    max_dist = min(lap_data[dist_col].max(), ref_data[dist_col].max())
+    if not np.isfinite(max_dist) or max_dist <= min_dist:
+        print("Error Replay Dashboard: No se pudo determinar rango de distancia valido.")
+        return
+
+    distances = np.linspace(min_dist, max_dist, sample_points)
+    channels = ['Speed', 'Throttle', 'Brake', 'Steer', 'RPM', 'Gear']
+    lap = {col: interp_series(lap_data, col, distances) for col in channels}
+    ref = {col: interp_series(ref_data, col, distances) for col in channels}
+    has_map = all(col in df_telemetry.columns for col in ['Latitude', 'Longitude'])
+    if has_map:
+        lap['Latitude'] = interp_series(lap_data, 'Latitude', distances)
+        lap['Longitude'] = interp_series(lap_data, 'Longitude', distances)
+        ref['Latitude'] = interp_series(ref_data, 'Latitude', distances)
+        ref['Longitude'] = interp_series(ref_data, 'Longitude', distances)
+        has_map = all(np.isfinite(lap[col]).any() and np.isfinite(ref[col]).any() for col in ['Latitude', 'Longitude'])
+
+    steer_abs = np.abs(np.concatenate([lap['Steer'], ref['Steer']]))
+    steer_limit = max(90, min(540, float(np.nanmax(steer_abs)) * 1.1 if np.isfinite(steer_abs).any() else 180))
+    turn_intensity = np.clip(np.abs(lap['Steer']) / steer_limit, 0, 1)
+
+    print(f"\n--- Dashboard Dinamico Coach V{lap_number} vs Ref V{reference_lap_number} ---")
+    print("Cierra la ventana del dashboard para volver al menu.")
+
+    vehicle_info = metadata.get("Vehicle", "Vehiculo")
+    track_info = metadata.get("Track", "Pista")
+    lap_color = '#1f77b4'
+    ref_color = '#d627b0'
+
+    fig = plt.figure(figsize=(19, 10.5), facecolor='#f2f2f2')
+    grid = fig.add_gridspec(5, 3, width_ratios=[1.05, 0.82, 1.65], hspace=0.35, wspace=0.24)
+    ax_map = fig.add_subplot(grid[:, 0])
+    ax_dash = fig.add_subplot(grid[:, 1])
+    ax_brake = fig.add_subplot(grid[0, 2])
+    ax_throttle = fig.add_subplot(grid[1, 2])
+    ax_speed = fig.add_subplot(grid[2, 2])
+    ax_steer = fig.add_subplot(grid[3, 2])
+    ax_engine = fig.add_subplot(grid[4, 2])
+    fig.suptitle(f"Driving Analyzer - V{lap_number} vs V{reference_lap_number} | {vehicle_info} @ {track_info}", fontsize=15, fontweight='bold')
+
+    if has_map:
+        ax_map.plot(lap['Longitude'], lap['Latitude'], color='0.75', lw=7, alpha=0.45, solid_capstyle='round')
+        ax_map.plot(lap['Longitude'], lap['Latitude'], color='0.28', lw=1.2, alpha=0.75, label='Circuito')
+        brake_idx = np.where(lap['Brake'] > 0.12)[0]
+        throttle_idx = np.where(lap['Throttle'] > 0.85)[0]
+        turn_idx = np.where(turn_intensity > 0.28)[0]
+        ax_map.scatter(lap['Longitude'][throttle_idx], lap['Latitude'][throttle_idx], s=9, color='#21a65b', alpha=0.45, label='Gas V')
+        ax_map.scatter(lap['Longitude'][brake_idx], lap['Latitude'][brake_idx], s=12, color='#d62728', alpha=0.55, label='Freno V')
+        ax_map.scatter(lap['Longitude'][turn_idx], lap['Latitude'][turn_idx], s=8, color='#9467bd', alpha=0.35, label='Giro V')
+        ax_map.plot(ref['Longitude'], ref['Latitude'], color=ref_color, alpha=0.35, lw=1.2, ls='--', label=f'Ref V{reference_lap_number}')
+        lap_marker, = ax_map.plot([], [], 'o', color=lap_color, markersize=11, markeredgecolor='white', markeredgewidth=1.4)
+        ref_marker, = ax_map.plot([], [], 'o', color=ref_color, markersize=9, markeredgecolor='white', markeredgewidth=1.2)
+        turn_ray, = ax_map.plot([], [], color='#6f42c1', lw=2.0, alpha=0.85)
+        ax_map.set_xlabel('Longitud')
+        ax_map.set_ylabel('Latitud')
+        ax_map.axis('equal')
+    else:
+        ax_map.plot(distances, np.zeros_like(distances), color='0.7', lw=5)
+        lap_marker, = ax_map.plot([], [], 'o', color=lap_color, markersize=11)
+        ref_marker, = ax_map.plot([], [], 'o', color=ref_color, markersize=9)
+        turn_ray, = ax_map.plot([], [], color='#6f42c1', lw=2.0)
+        ax_map.set_yticks([])
+        ax_map.set_xlabel('Distancia (m)')
+    ax_map.set_title('Circuito: verde gas | rojo freno | violeta giro', loc='left', fontsize=11, fontweight='bold')
+    ax_map.grid(True, linestyle=':', alpha=0.35)
+    ax_map.legend(loc='best', fontsize=8)
+    info_text = ax_map.text(0.02, 0.98, '', transform=ax_map.transAxes, va='top', ha='left',
+                            bbox=dict(facecolor='white', alpha=0.88, edgecolor='0.75'))
+
+    ax_dash.set_title('Cockpit Coach', loc='left', fontsize=11, fontweight='bold')
+    ax_dash.set_xlim(0, 1)
+    ax_dash.set_ylim(0, 1)
+    ax_dash.axis('off')
+    ax_dash.add_patch(patches.FancyBboxPatch((0.03, 0.03), 0.94, 0.93, boxstyle="round,pad=0.015",
+                                             facecolor='white', edgecolor='0.82', alpha=0.96))
+    values_text = ax_dash.text(0.08, 0.93, '', va='top', ha='left', fontsize=8.2,
+                               bbox=dict(facecolor='#f7f9fb', alpha=0.95, edgecolor='0.82'))
+
+    wheel_ax = ax_dash.inset_axes([0.285, 0.465, 0.43, 0.32])
+    wheel_ax.set_xlim(-1, 1)
+    wheel_ax.set_ylim(-1, 1)
+    wheel_ax.set_aspect('equal', adjustable='box')
+    wheel_ax.axis('off')
+    wheel_radius = 0.82
+    wheel_ax.add_patch(patches.Circle((0, 0), wheel_radius + 0.035, fill=False, lw=2, edgecolor='0.60', alpha=0.35))
+    wheel_ax.add_patch(patches.Circle((0, 0), wheel_radius, fill=False, lw=10, edgecolor='0.13'))
+    wheel_ax.add_patch(patches.Circle((0, 0), 0.15, fill=True, facecolor='0.18', edgecolor='0.35', lw=1.5))
+    wheel_line, = wheel_ax.plot([], [], color=lap_color, lw=4.2, solid_capstyle='round')
+    wheel_ref_line, = wheel_ax.plot([], [], color=ref_color, lw=2.4, alpha=0.82, solid_capstyle='round')
+    ax_dash.text(0.50, 0.435, 'STEERING', ha='center', fontsize=8, color='0.25', fontweight='bold')
+    steering_value_text = ax_dash.text(0.50, 0.405, '', ha='center', fontsize=12, color=lap_color, fontweight='bold')
+
+    pedal_base_y = 0.135
+    pedal_height = 0.205
+    pedal_width = 0.060
+    pedal_specs = [
+        ('CLUTCH', 0.100, '0.70', '0.90'),
+        ('BRAKE', 0.220, '#d62728', '#f2b1b1'),
+        ('GAS', 0.340, '#21a65b', '#b8e3c8'),
+    ]
+    pedal_bars = {}
+    pedal_ref_bars = {}
+    pedal_value_texts = {}
+    for label, x, color, ref_fill in pedal_specs:
+        ax_dash.text(x + pedal_width / 2, pedal_base_y + pedal_height + 0.025, label, ha='center', fontsize=7.3,
+                     color=color if label != 'CLUTCH' else '0.35', fontweight='bold')
+        ax_dash.add_patch(patches.Rectangle((x, pedal_base_y), pedal_width, pedal_height,
+                                            facecolor='0.88', edgecolor='0.65', lw=1))
+        ref_bar = patches.Rectangle((x + pedal_width + 0.012, pedal_base_y), 0.020, 0.0,
+                                    facecolor=ref_fill, edgecolor='none', alpha=0.95)
+        main_bar = patches.Rectangle((x, pedal_base_y), pedal_width, 0.0,
+                                     facecolor=color, edgecolor='none', alpha=0.88)
+        ax_dash.add_patch(ref_bar)
+        ax_dash.add_patch(main_bar)
+        pedal_ref_bars[label] = ref_bar
+        pedal_bars[label] = main_bar
+        pedal_value_texts[label] = ax_dash.text(x + pedal_width / 2, pedal_base_y - 0.030, '', ha='center',
+                                                fontsize=7.2, color='0.25')
+
+    ax_dash.text(0.695, 0.355, 'GEAR', ha='center', fontsize=8, color='0.25', fontweight='bold')
+    ax_dash.text(0.835, 0.355, 'REF', ha='center', fontsize=8, color='0.45', fontweight='bold')
+    gear_box = patches.FancyBboxPatch((0.625, 0.165), 0.135, 0.155, boxstyle="round,pad=0.01",
+                                      facecolor='#eef5ff', edgecolor=lap_color, lw=1.5)
+    gear_ref_box = patches.FancyBboxPatch((0.795, 0.185), 0.100, 0.115, boxstyle="round,pad=0.01",
+                                          facecolor='#fff2fb', edgecolor=ref_color, lw=1.2)
+    ax_dash.add_patch(gear_box)
+    ax_dash.add_patch(gear_ref_box)
+    gear_text = ax_dash.text(0.692, 0.240, '', ha='center', va='center', fontsize=40, color=lap_color, fontweight='bold')
+    gear_ref_text = ax_dash.text(0.845, 0.240, '', ha='center', va='center', fontsize=28, color=ref_color, fontweight='bold')
+    coach_text = ax_dash.text(0.08, 0.052, '', va='bottom', ha='left', fontsize=7.9,
+                              bbox=dict(facecolor='#fff8cc', alpha=0.96, edgecolor='#d4b106'))
+
+    def setup_axis(ax, title, ylabel, ylim=None):
+        ax.set_title(title, loc='left', fontsize=10, fontweight='bold')
+        ax.set_ylabel(ylabel)
+        ax.grid(True, linestyle=':', alpha=0.45)
+        ax.set_xlim(min_dist, max_dist)
+        if ylim:
+            ax.set_ylim(*ylim)
+
+    setup_axis(ax_brake, 'Brake %', '%', (-5, 105))
+    setup_axis(ax_throttle, 'Throttle %', '%', (-5, 105))
+    setup_axis(ax_speed, 'Speed', 'km/h')
+    setup_axis(ax_steer, 'Steering angle', 'deg', (-steer_limit, steer_limit))
+    setup_axis(ax_engine, 'RPM / Gear', 'RPM')
+    ax_engine.set_xlabel('Distancia de vuelta (m)')
+    ax_gear = ax_engine.twinx()
+    ax_gear.set_ylabel('Marcha')
+
+    ax_brake.plot(distances, lap['Brake'] * 100, color=lap_color, lw=1.5, label=f'V{lap_number}')
+    ax_brake.plot(distances, ref['Brake'] * 100, color=ref_color, lw=1.2, ls='--', label=f'Ref V{reference_lap_number}')
+    ax_throttle.plot(distances, lap['Throttle'] * 100, color=lap_color, lw=1.5, label=f'V{lap_number}')
+    ax_throttle.plot(distances, ref['Throttle'] * 100, color=ref_color, lw=1.2, ls='--', label=f'Ref V{reference_lap_number}')
+    ax_speed.plot(distances, lap['Speed'], color=lap_color, lw=1.5, label=f'V{lap_number}')
+    ax_speed.plot(distances, ref['Speed'], color=ref_color, lw=1.2, ls='--', label=f'Ref V{reference_lap_number}')
+    ax_steer.plot(distances, lap['Steer'], color=lap_color, lw=1.4, label=f'V{lap_number}')
+    ax_steer.plot(distances, ref['Steer'], color=ref_color, lw=1.1, ls='--', label=f'Ref V{reference_lap_number}')
+    ax_engine.plot(distances, lap['RPM'], color=lap_color, lw=1.3, label='RPM V')
+    ax_engine.plot(distances, ref['RPM'], color=ref_color, lw=1.0, ls='--', label='RPM Ref')
+    ax_gear.step(distances, lap['Gear'], color='#111111', where='post', lw=1.2, label='Gear V')
+    ax_gear.step(distances, ref['Gear'], color='0.45', where='post', lw=1.0, ls='--', label='Gear Ref')
+    for ax in [ax_brake, ax_throttle, ax_speed, ax_steer]:
+        ax.legend(loc='upper right', fontsize=8, ncol=2)
+    engine_lines, engine_labels = ax_engine.get_legend_handles_labels()
+    gear_lines, gear_labels = ax_gear.get_legend_handles_labels()
+    ax_gear.legend(engine_lines + gear_lines, engine_labels + gear_labels, loc='upper right', fontsize=8, ncol=2)
+
+    cursor_lines = [ax.axvline(min_dist, color='black', lw=1, alpha=0.75) for ax in [ax_brake, ax_throttle, ax_speed, ax_steer, ax_engine]]
+    metric_boxes = {
+        'brake': ax_brake.text(0.01, 0.88, '', transform=ax_brake.transAxes, fontsize=8, bbox=dict(facecolor='white', alpha=0.8, edgecolor='0.8')),
+        'throttle': ax_throttle.text(0.01, 0.88, '', transform=ax_throttle.transAxes, fontsize=8, bbox=dict(facecolor='white', alpha=0.8, edgecolor='0.8')),
+        'speed': ax_speed.text(0.01, 0.88, '', transform=ax_speed.transAxes, fontsize=8, bbox=dict(facecolor='white', alpha=0.8, edgecolor='0.8')),
+        'steer': ax_steer.text(0.01, 0.88, '', transform=ax_steer.transAxes, fontsize=8, bbox=dict(facecolor='white', alpha=0.8, edgecolor='0.8')),
+    }
+
+    playback_state = {'paused': False, 'frame': 0}
+
+    def render_frame(frame):
+        frame = int(np.clip(frame, 0, len(distances) - 1))
+        playback_state['frame'] = frame
+        d = distances[frame]
+        for line in cursor_lines:
+            line.set_xdata([d, d])
+        if has_map:
+            lx, ly = lap['Longitude'][frame], lap['Latitude'][frame]
+            rx, ry = ref['Longitude'][frame], ref['Latitude'][frame]
+            lap_marker.set_data([lx], [ly])
+            ref_marker.set_data([rx], [ry])
+            steer_norm = np.clip(lap['Steer'][frame] / steer_limit, -1, 1) if np.isfinite(lap['Steer'][frame]) else 0
+            scale_x = (np.nanmax(lap['Longitude']) - np.nanmin(lap['Longitude'])) * 0.04
+            scale_y = (np.nanmax(lap['Latitude']) - np.nanmin(lap['Latitude'])) * 0.04
+            turn_ray.set_data([lx, lx + steer_norm * scale_x], [ly, ly + abs(steer_norm) * scale_y])
+        else:
+            lap_marker.set_data([d], [0])
+            ref_marker.set_data([d], [0])
+            turn_ray.set_data([d, d], [0, 0])
+
+        steer_angle = lap['Steer'][frame] if np.isfinite(lap['Steer'][frame]) else 0
+        ref_steer_angle = ref['Steer'][frame] if np.isfinite(ref['Steer'][frame]) else 0
+        wheel_angle = np.deg2rad(np.clip(steer_angle, -180, 180))
+        ref_wheel_angle = np.deg2rad(np.clip(ref_steer_angle, -180, 180))
+        wheel_line.set_data(
+            [-np.cos(wheel_angle) * wheel_radius * 0.70, np.cos(wheel_angle) * wheel_radius * 0.70],
+            [-np.sin(wheel_angle) * wheel_radius * 0.70, np.sin(wheel_angle) * wheel_radius * 0.70]
+        )
+        wheel_ref_line.set_data(
+            [-np.cos(ref_wheel_angle) * wheel_radius * 0.58, np.cos(ref_wheel_angle) * wheel_radius * 0.58],
+            [-np.sin(ref_wheel_angle) * wheel_radius * 0.58, np.sin(ref_wheel_angle) * wheel_radius * 0.58]
+        )
+        steering_value_text.set_text(f"{steer_angle:+.1f} deg | ref {ref_steer_angle:+.1f}")
+
+        brake_value = float(np.clip(lap['Brake'][frame], 0, 1))
+        throttle_value = float(np.clip(lap['Throttle'][frame], 0, 1))
+        ref_brake_value = float(np.clip(ref['Brake'][frame], 0, 1))
+        ref_throttle_value = float(np.clip(ref['Throttle'][frame], 0, 1))
+        pedal_bars['CLUTCH'].set_height(0.0)
+        pedal_ref_bars['CLUTCH'].set_height(0.0)
+        pedal_bars['BRAKE'].set_height(brake_value * pedal_height)
+        pedal_ref_bars['BRAKE'].set_height(ref_brake_value * pedal_height)
+        pedal_bars['GAS'].set_height(throttle_value * pedal_height)
+        pedal_ref_bars['GAS'].set_height(ref_throttle_value * pedal_height)
+        pedal_value_texts['CLUTCH'].set_text("0%")
+        pedal_value_texts['BRAKE'].set_text(f"{brake_value * 100:.0f}%")
+        pedal_value_texts['GAS'].set_text(f"{throttle_value * 100:.0f}%")
+
+        gear_text.set_text(str(int(round(lap['Gear'][frame]))) if np.isfinite(lap['Gear'][frame]) else '-')
+        gear_ref_text.set_text(str(int(round(ref['Gear'][frame]))) if np.isfinite(ref['Gear'][frame]) else '-')
+        speed_delta = lap['Speed'][frame] - ref['Speed'][frame]
+        brake_delta = (lap['Brake'][frame] - ref['Brake'][frame]) * 100
+        throttle_delta = (lap['Throttle'][frame] - ref['Throttle'][frame]) * 100
+        steer_delta = lap['Steer'][frame] - ref['Steer'][frame]
+        info_text.set_text(
+            f"Distancia: {d:7.1f} m\n"
+            f"Velocidad V{lap_number}: {metric_label(lap['Speed'][frame])} km/h\n"
+            f"Velocidad Ref: {metric_label(ref['Speed'][frame])} km/h\n"
+            f"Delta velocidad: {speed_delta:+.1f} km/h"
+        )
+        values_text.set_text(
+            f"V{lap_number} vs Ref V{reference_lap_number}\n"
+            f"Speed {metric_label(lap['Speed'][frame])}/{metric_label(ref['Speed'][frame])} km/h\n"
+            f"Brake {lap['Brake'][frame]*100:4.0f}/{ref['Brake'][frame]*100:4.0f}%\n"
+            f"Gas   {lap['Throttle'][frame]*100:4.0f}/{ref['Throttle'][frame]*100:4.0f}%\n"
+            f"RPM   {lap['RPM'][frame]:5.0f}/{ref['RPM'][frame]:5.0f}"
+        )
+        coach_text.set_text(
+            "Coach focus:\n"
+            f"Brake delta {brake_delta:+.1f}%\n"
+            f"Gas delta {throttle_delta:+.1f}%\n"
+            f"Steer delta {steer_delta:+.1f} deg\n"
+            "Mapa: rojo freno, verde gas,\n"
+            "violeta radio/giro."
+        )
+        metric_boxes['brake'].set_text(f"Delta brake: {brake_delta:+.1f}%")
+        metric_boxes['throttle'].set_text(f"Delta gas: {throttle_delta:+.1f}%")
+        metric_boxes['speed'].set_text(f"Delta speed: {speed_delta:+.1f} km/h")
+        metric_boxes['steer'].set_text(f"Delta steering: {steer_delta:+.1f} deg")
+        state_text = "PAUSA" if playback_state['paused'] else "PLAY"
+        fig.suptitle(
+            f"Driving Analyzer - {state_text} - V{lap_number} vs V{reference_lap_number} | "
+            f"{vehicle_info} @ {track_info} | Space pausa/reanuda | Flechas paso a paso",
+            fontsize=15,
+            fontweight='bold'
+        )
+        return [lap_marker, ref_marker, turn_ray, info_text, wheel_line, wheel_ref_line, steering_value_text,
+                *pedal_bars.values(), *pedal_ref_bars.values(),
+                *pedal_value_texts.values(), gear_text, gear_ref_text, values_text, coach_text,
+                *cursor_lines, *metric_boxes.values()]
+
+    def update(frame):
+        if playback_state['paused']:
+            return render_frame(playback_state['frame'])
+        return render_frame(frame)
+
+    def on_key_press(event):
+        key = (event.key or '').lower()
+        if key == ' ':
+            playback_state['paused'] = not playback_state['paused']
+        elif key in ['right', 'd']:
+            playback_state['paused'] = True
+            playback_state['frame'] = min(playback_state['frame'] + 5, len(distances) - 1)
+        elif key in ['left', 'a']:
+            playback_state['paused'] = True
+            playback_state['frame'] = max(playback_state['frame'] - 5, 0)
+        elif key in ['up', 'w']:
+            playback_state['paused'] = True
+            playback_state['frame'] = min(playback_state['frame'] + 25, len(distances) - 1)
+        elif key in ['down', 's']:
+            playback_state['paused'] = True
+            playback_state['frame'] = max(playback_state['frame'] - 25, 0)
+        elif key == 'home':
+            playback_state['paused'] = True
+            playback_state['frame'] = 0
+        elif key == 'end':
+            playback_state['paused'] = True
+            playback_state['frame'] = len(distances) - 1
+        render_frame(playback_state['frame'])
+        fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect('key_press_event', on_key_press)
+    anim = FuncAnimation(fig, update, frames=len(distances), interval=interval_ms, blit=False, repeat=True)
+    fig._replay_animation = anim
+    fig.subplots_adjust(left=0.04, right=0.98, top=0.91, bottom=0.06)
+    print("Mostrando dashboard dinamico de coach...")
+    try:
+        plt.show()
+    except Exception as e_show:
+        print(f"Error mostrando replay dashboard: {e_show}")
+    print("Dashboard dinamico cerrado.")
 
 
 # --- Función plot_delta_analysis_dashboard (OBSOLETA - Mantenida comentada) ---

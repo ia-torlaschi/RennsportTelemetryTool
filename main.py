@@ -12,7 +12,7 @@ import re  # Para validar formato tiempo
 try:
     # Asegúrate que estos archivos .py estén en el mismo directorio o PYTHONPATH
     from data_loader import load_telemetry_csv
-    from plotter import plot_lap_speed_profile, plot_lap_inputs, plot_lap_engine, plot_comparison_dashboard
+    from plotter import plot_lap_speed_profile, plot_lap_inputs, plot_lap_engine, plot_comparison_dashboard, plot_live_comparison_replay
 except ImportError as e:
     print(f"Error FATAL importando data_loader/plotter: {e}")
     print("Asegúrate que data_loader.py y plotter.py estén en el directorio correcto.")
@@ -40,6 +40,25 @@ except Exception as e_llm:
 
 
 # --- Funciones Auxiliares (format_time - sin cambios) ---
+def clean_user_input(value):
+    """Limpia caracteres invisibles/comillas que pueden aparecer al automatizar entradas."""
+    if value is None:
+        return ""
+    cleaned = value.strip().lstrip('\ufeff').strip('"').strip("'")
+    # Algunas consolas convierten el BOM de una entrada automatizada en '?'.
+    while cleaned.startswith('?') and len(cleaned) > 1:
+        cleaned = cleaned[1:].lstrip()
+    return cleaned
+
+
+def prompt_user(prompt):
+    """Lee input interactivo y sale limpio si la entrada automatizada se agota."""
+    try:
+        return clean_user_input(input(prompt))
+    except EOFError:
+        return ""
+
+
 def format_time(seconds):
     """Formatea segundos en MM:SS.ms"""
     if pd.isna(seconds) or not np.isfinite(seconds) or seconds < 0: return "N/A"
@@ -122,7 +141,7 @@ def run_ai_analysis_workflow():
     # --- PASO 1: Obtener Contexto Inicial ---
     print("\nPASO 1: Contexto Inicial")
     while True:
-        laptime_image_path = input("Introduce la ruta a la imagen de TIEMPOS POR VUELTA (ej. Times.png): ").strip()
+        laptime_image_path = prompt_user("Introduce la ruta a la imagen de TIEMPOS POR VUELTA (ej. Times.png): ")
         if not laptime_image_path: print("Entrada vacía, abortando."); return
         if os.path.exists(laptime_image_path): break
         else: print(f"Error: Archivo '{laptime_image_path}' no encontrado.")
@@ -247,8 +266,8 @@ def run_ai_analysis_workflow():
 def main():
     print("--- Iniciando RennsportTelemetryTool ---")
     while True: # Bucle principal archivo CSV
-        file_path = input("\nIntroduce la ruta al archivo CSV de telemetría (o deja vacío para salir): ").strip()
-        if not file_path: print("Saliendo..."); break
+        file_path = prompt_user("\nIntroduce la ruta al archivo CSV de telemetría (o deja vacío para salir): ")
+        if not file_path or file_path.upper() == 'Q': print("Saliendo..."); break
         if not os.path.exists(file_path): print(f"Error: '{file_path}' no existe."); continue
         if not file_path.lower().endswith('.csv'): print(f"Error: '{os.path.basename(file_path)}' no parece ser CSV."); continue
 
@@ -317,7 +336,7 @@ def main():
                          # --- Submenú Gráficos ---
                          while True:
                              print(f"\n--- Menú Gráficos V{selected_lap_num} ---")
-                             print("1: Velocidad | 2: Entradas | 3: Motor | 4: Dashboard Comp. | 5: TODOS | V: Volver")
+                             print("1: Velocidad | 2: Entradas | 3: Motor | 4: Dashboard Comp. | 5: TODOS | 6: Replay Vivo | V: Volver")
                              report_choice = input("Opción: ").strip().upper()
                              if report_choice == 'V': break
                              try:
@@ -339,6 +358,21 @@ def main():
                                      print(f"Generando Dashboard V{selected_lap_num} vs V{ref_lap_num}...")
                                      # --- LLAMADA CORREGIDA (4 ARGS) ---
                                      plot_comparison_dashboard(df_cleaned, metadata, selected_lap_num, ref_lap_num)
+                                     print("OK.")
+                                 elif report_choice == '6': # Replay Dashboard Vivo
+                                     valid_ref = laps_info_df[(laps_info_df['IsTimeValid']) & (laps_info_df['LapType']=='Timed Lap') & (laps_info_df['Lap']!=selected_lap_num)]
+                                     if valid_ref.empty: print("No refs disponibles."); continue
+                                     avail_ref_laps = sorted(valid_ref['Lap'].astype(int).tolist())
+                                     ref_prompt = f"Ref para replay V{selected_lap_num}? (Disp: {avail_ref_laps}"
+                                     if best_lap_row is not None and best_lap_row['Lap'] != selected_lap_num: ref_prompt += f", Mejor V{int(best_lap_row['Lap'])}"
+                                     ref_prompt += ". 'C' Cancelar): "
+                                     ref_choice = input(ref_prompt).strip().upper()
+                                     if ref_choice == 'C': continue
+                                     try: ref_lap_num = int(ref_choice)
+                                     except ValueError: print("Número inválido"); continue
+                                     if ref_lap_num not in avail_ref_laps: print("Ref inválida."); continue
+                                     print(f"Generando Replay Vivo V{selected_lap_num} vs V{ref_lap_num}...")
+                                     plot_live_comparison_replay(df_cleaned, metadata, selected_lap_num, ref_lap_num)
                                      print("OK.")
                                  elif report_choice == '5': # Todos
                                      print(f"Generando TODOS para V{selected_lap_num}..."); err_p=False
