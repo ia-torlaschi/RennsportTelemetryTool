@@ -1,4 +1,4 @@
-# Byte-compiled / optimized / DLL files
+﻿# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -92,3 +92,13 @@ ipython_config.py
 .Trashes
 ehthumbs.db
 Thumbs.db
+# ============================================================
+# Agent Skills (auto-synced by ia-backup — DO NOT COMMIT)
+# Managed by: Sync_Skills_Workspace.ps1
+# ============================================================
+.agents/skills/
+.claude/skills/
+.gemini/skills/
+.copilot/skills/
+.codex/skills/
+.github/skills/
