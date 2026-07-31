@@ -1,4 +1,4 @@
-﻿# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -92,19 +92,34 @@ ipython_config.py
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# BEGIN IA-BACKUP MANAGED AI GIT POLICY
 # ============================================================
-# Agent Skills (auto-synced by ia-backup — DO NOT COMMIT)
-# Managed by: Sync_Skills_Workspace.ps1
+# IA control plane - PUBLICO: excluir y no versionar ninguna IA
+# Siete plataformas con igual peso; repositorio fuera de Sync.
 # ============================================================
-.agents/skills/
-.claude/skills/
-.gemini/skills/
-.copilot/skills/
-.codex/skills/
-.github/skills/
-# ia-backup canonico (solo local — NO publicar)
-.claude/agents/
-.codex/agents/
-.gemini/agents/
-.github/agents/
-.continue/
+# agents
+/.agents/
+# claude
+/.claude/
+# codex
+/.codex/
+# continue
+/.continue/
+# copilot
+/.copilot/
+# gemini
+/.gemini/
+# github
+/.github/skills/
+/.github/agents/
+/.github/prompts/
+/.github/instructions/
+/.github/copilot-instructions.md
+# contexto compartido y marcador de autoridad
+/PROJECT_MEMORY.md
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+/.skills-source
+# END IA-BACKUP MANAGED AI GIT POLICY
