@@ -98,6 +98,33 @@ Thumbs.db
 # IA control plane - PUBLICO: excluir y no versionar ninguna IA
 # Siete plataformas con igual peso; repositorio fuera de Sync.
 # ============================================================
+# proteccion de secretos y entornos (gestionada; no eliminar)
+.env
+.env.*
+*.env
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+*.jks
+*.keystore
+*.secret
+secrets/
+credentials/
+*token*
+*client_secret*
+# basura tecnica
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+*.pyc
+*.pyo
+node_modules/
+.venv/
+venv/
 # agents
 /.agents/
 # claude
