@@ -131,8 +131,6 @@ venv/
 /.claude/
 # codex
 /.codex/
-# continue
-/.continue/
 # copilot
 /.copilot/
 # gemini
